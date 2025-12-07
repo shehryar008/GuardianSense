@@ -1,13 +1,15 @@
-import { ShieldIcon, ActivityIcon, BarChart3Icon } from "../../components/shared/icons"
-import { FeatureItem } from "../../components/login/feature-item"
-import { StatItem } from "../../components/login/stat-item"
-import { AdminLoginForm } from "../../components/login/admin-login-form"
-import { Footer } from "../../components/shared/footer"
+import { ShieldIcon, ActivityIcon, BarChart3Icon } from "../../../components/shared/icons"
+import { FeatureItem } from "../../../components/login/feature-item"
+import { StatItem } from "../../../components/login/stat-item"
+import { AdminLoginForm } from "../../../components/login/admin-login-form"
+import { Footer } from "../../../components/shared/footer"
 
-export default function AdminLoginPage() {
+export default function LoginPage() {
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-100 to-gray-50 flex flex-col">
       {/* Purple gradient accent line at top */}
+      <div className="h-1 bg-gradient-to-r from-violet-400 via-purple-500 to-violet-400" />
+
       {/* Main Content */}
       <main className="flex-1 flex items-center justify-center px-4 py-8 lg:py-12">
         <div className="w-full max-w-6xl grid lg:grid-cols-2 gap-12 lg:gap-16 items-center">

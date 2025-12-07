@@ -3,7 +3,8 @@
 import type React from "react"
 
 import { useState } from "react"
-import { MailIcon, LockIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from "../components/icons"
+import { useRouter } from "next/navigation"
+import { MailIcon, LockIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from "../shared/icons"
 
 
 export function AdminLoginForm() {
@@ -11,10 +12,12 @@ export function AdminLoginForm() {
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [rememberMe, setRememberMe] = useState(false)
+  const router = useRouter()
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
     console.log({ email, password, rememberMe })
+    router.push("/dashboard")
   }
 
   return (

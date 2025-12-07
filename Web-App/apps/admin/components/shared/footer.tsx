@@ -1,4 +1,4 @@
-import { LockIcon } from "../components/icons"
+import { LockIcon } from "../shared/icons"
 
 export function Footer() {
   return (
