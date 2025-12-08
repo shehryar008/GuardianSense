@@ -12,7 +12,8 @@ import {
   UsersIcon,
   ClockIcon,
   SettingsIcon,
-} from "../shared/icons"
+  KeyRoundIcon, // Added KeyRoundIcon import
+} from "../../components/shared/icons"
 
 const navItems = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboardIcon },
@@ -20,6 +21,7 @@ const navItems = [
   { name: "Police Data", href: "/dashboard/police", icon: BadgeIcon },
   { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3Icon },
   { name: "Reports", href: "/dashboard/reports", icon: FileTextIcon },
+  { name: "Access Management", href: "/dashboard/access", icon: KeyRoundIcon }, // Added Access Management nav item
   { name: "Personnel", href: "/dashboard/personnel", icon: UsersIcon },
   { name: "Activity Log", href: "/dashboard/activity", icon: ClockIcon },
   { name: "Settings", href: "/dashboard/settings", icon: SettingsIcon },
