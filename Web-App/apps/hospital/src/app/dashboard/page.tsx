@@ -8,7 +8,7 @@ import { AlertTriangleIcon, ClockIcon, ActivityIcon, UsersIcon } from "../../../
 export default function HospitalDashboard() {
   return (
     <div className="min-h-screen bg-gray-50 flex">
-      <Sidebar />
+      <Sidebar activeItem="Dashboard" />
 
       <div className="flex-1 flex flex-col">
         <Header />

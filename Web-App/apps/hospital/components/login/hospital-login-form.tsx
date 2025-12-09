@@ -85,7 +85,7 @@ export function HospitalLoginForm() {
           <div className="flex items-center justify-center gap-2 text-sm text-gray-500">
             <UsersIcon className="h-4 w-4" />
             <span>First time user?</span>
-            <a href="#" className="text-teal-500 hover:text-teal-600 font-medium">
+            <a href="/register" className="text-teal-500 hover:text-teal-600 font-medium">
               Request access
             </a>
           </div>
