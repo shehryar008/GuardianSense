@@ -6,13 +6,47 @@ import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { UserIcon, LockIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from "../shared/icons"
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+
 export function HospitalLoginForm() {
   const [showPassword, setShowPassword] = useState(false)
+  const [email, setEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [error, setError] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    router.push("/dashboard")
+    setError("")
+    setIsLoading(true)
+
+    try {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await res.json()
+
+      if (!res.ok || !data.success) {
+        setError(data.message || "Invalid credentials")
+        return
+      }
+
+      localStorage.setItem("token", data.data.session.access_token)
+      localStorage.setItem("refresh_token", data.data.session.refresh_token)
+      if (data.data.hospital) {
+        localStorage.setItem("hospital", JSON.stringify(data.data.hospital))
+      }
+
+      router.push("/dashboard")
+    } catch (err) {
+      setError("Unable to connect to server. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -23,16 +57,25 @@ export function HospitalLoginForm() {
           <p className="text-gray-500 text-sm mt-2">Enter your credentials to access the medical center</p>
         </div>
 
+        {error && (
+          <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+            {error}
+          </div>
+        )}
+
         <form onSubmit={handleSubmit} className="space-y-6">
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">Employee ID</label>
+            <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
             <div className="relative">
               <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
                 <UserIcon className="h-5 w-5 text-gray-400" />
               </div>
               <input
-                type="text"
-                placeholder="Enter your employee ID"
+                type="email"
+                placeholder="Enter your email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                required
                 className="w-full pl-10 pr-4 py-3 bg-teal-50/50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-gray-900 placeholder:text-gray-500"
               />
             </div>
@@ -47,6 +90,9 @@ export function HospitalLoginForm() {
               <input
                 type={showPassword ? "text" : "password"}
                 placeholder="Enter your password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                required
                 className="w-full pl-10 pr-12 py-3 bg-teal-50/50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-teal-500 focus:border-transparent text-gray-900 placeholder:text-gray-500"
               />
               <button
@@ -75,9 +121,10 @@ export function HospitalLoginForm() {
 
           <button
             type="submit"
-            className="w-full py-3 px-4 bg-gradient-to-r from-teal-500 to-teal-600 text-white font-medium rounded-lg hover:from-teal-600 hover:to-teal-700 transition-all shadow-lg shadow-teal-500/25"
+            disabled={isLoading}
+            className="w-full py-3 px-4 bg-gradient-to-r from-teal-500 to-teal-600 text-white font-medium rounded-lg hover:from-teal-600 hover:to-teal-700 transition-all shadow-lg shadow-teal-500/25 disabled:opacity-50 disabled:cursor-not-allowed"
           >
-            Sign In
+            {isLoading ? "Signing In..." : "Sign In"}
           </button>
         </form>
 
