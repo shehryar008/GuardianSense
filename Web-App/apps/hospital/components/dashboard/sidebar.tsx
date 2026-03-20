@@ -12,6 +12,7 @@ import {
   SettingsIcon,
 } from "../shared/icons"
 import Link from "next/link"
+import { useAuth } from "../auth/auth-provider"
 
 const navItems = [
   { icon: LayoutDashboardIcon, label: "Dashboard", href: "/dashboard" },
@@ -29,6 +30,8 @@ interface SidebarProps {
 }
 
 export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
+  const { logout } = useAuth()
+
   return (
     <aside className="w-64 bg-gradient-to-b from-teal-600 to-teal-700 min-h-screen p-4 flex flex-col">
       {/* Logo */}
@@ -69,6 +72,33 @@ export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
           )
         })}
       </nav>
+
+      {/* Logout */}
+      <button
+        onClick={logout}
+        className="flex items-center gap-3 px-4 py-3 rounded-xl text-teal-100 hover:bg-red-500/20 hover:text-white transition-all mt-2"
+      >
+        <LogOutIcon className="w-5 h-5" />
+        <span>Logout</span>
+      </button>
     </aside>
+  )
+}
+
+function LogOutIcon({ className }: { className?: string }) {
+  return (
+    <svg
+      className={className}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+      <polyline points="16 17 21 12 16 7" />
+      <line x1="21" y1="12" x2="9" y2="12" />
+    </svg>
   )
 }
