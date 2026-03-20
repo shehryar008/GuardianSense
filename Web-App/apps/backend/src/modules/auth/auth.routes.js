@@ -28,11 +28,54 @@ router.post(
 
       const { email, password } = req.body;
 
-      // Authenticate via Supabase Auth
-      const { data, error } = await supabase.auth.signInWithPassword({
+      // First, check if this email belongs to an active hospital
+      const { data: hospital, error: hospitalError } = await supabase
+        .from('hospitals')
+        .select('*')
+        .eq('email', email)
+        .eq('is_active', true)
+        .maybeSingle();
+
+      // Try to sign in via Supabase Auth
+      let { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
+
+      // If login failed and the email exists in Hospitals table,
+      // auto-create the auth user and retry login
+      if (error && hospital) {
+        const { error: createError } = await supabase.auth.admin.createUser({
+          email,
+          password,
+          email_confirm: true,
+        });
+
+        // If user already exists in auth but wrong password, don't mask the error
+        if (createError && createError.message.includes('already been registered')) {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid password',
+            error: 'The password you entered is incorrect',
+          });
+        }
+
+        if (createError) {
+          return res.status(401).json({
+            success: false,
+            message: 'Invalid email or password',
+            error: createError.message,
+          });
+        }
+
+        // Retry login with newly created auth user
+        const retryResult = await supabase.auth.signInWithPassword({
+          email,
+          password,
+        });
+        data = retryResult.data;
+        error = retryResult.error;
+      }
 
       if (error) {
         return res.status(401).json({
@@ -41,14 +84,6 @@ router.post(
           error: error.message,
         });
       }
-
-      // Check if the user is associated with a hospital
-      const { data: hospital, error: hospitalError } = await supabase
-        .from('Hospitals')
-        .select('*')
-        .eq('email', email)
-        .eq('is_active', true)
-        .maybeSingle();
 
       res.json({
         success: true,
@@ -102,10 +137,11 @@ router.post(
 
       const { email, password } = req.body;
 
-      // Register via Supabase Auth
-      const { data, error } = await supabase.auth.signUp({
+      // Register via Supabase Auth Admin (skips email verification)
+      const { data, error } = await supabase.auth.admin.createUser({
         email,
         password,
+        email_confirm: true,
       });
 
       if (error) {
@@ -118,7 +154,7 @@ router.post(
 
       res.status(201).json({
         success: true,
-        message: 'Registration successful. Please check your email for verification.',
+        message: 'Registration successful',
         data: {
           user: {
             id: data.user.id,

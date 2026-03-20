@@ -4,7 +4,7 @@ const supabase = require('../../config/db');
 
 const findAllActive = async () => {
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .select('*')
     .eq('is_active', true)
     .order('hospital_id', { ascending: true });
@@ -15,7 +15,7 @@ const findAllActive = async () => {
 
 const findById = async (id) => {
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .select('*')
     .eq('hospital_id', id)
     .single();
@@ -27,7 +27,7 @@ const findById = async (id) => {
 
 const create = async ({ hospital_name, address, city, phone, email, bed_capacity }) => {
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .insert({ hospital_name, address, city, phone, email, bed_capacity })
     .select()
     .single();
@@ -38,7 +38,7 @@ const create = async ({ hospital_name, address, city, phone, email, bed_capacity
 
 const update = async (id, { hospital_name, address, city, phone, email, bed_capacity }) => {
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .update({ hospital_name, address, city, phone, email, bed_capacity })
     .eq('hospital_id', id)
     .select()
@@ -55,7 +55,7 @@ const toggleStatus = async (id) => {
   if (!hospital) return null;
 
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .update({ is_active: !hospital.is_active })
     .eq('hospital_id', id)
     .select()
@@ -67,7 +67,7 @@ const toggleStatus = async (id) => {
 
 const softDelete = async (id) => {
   const { data, error } = await supabase
-    .from('Hospitals')
+    .from('hospitals')
     .update({ is_active: false })
     .eq('hospital_id', id)
     .select()
@@ -82,7 +82,7 @@ const softDelete = async (id) => {
 
 const findIncidentById = async (incidentId) => {
   const { data, error } = await supabase
-    .from('Incidents')
+    .from('incidents')
     .select('*')
     .eq('incident_id', incidentId)
     .single();
@@ -96,7 +96,7 @@ const findIncidentById = async (incidentId) => {
 
 const findHospitalDispatchForIncident = async (incidentId) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
+    .from('incident_dispatch')
     .select('*')
     .eq('incident_id', incidentId)
     .eq('responder_type', 'Hospital')
@@ -108,7 +108,7 @@ const findHospitalDispatchForIncident = async (incidentId) => {
 
 const createDispatch = async (incidentId, hospitalId) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
+    .from('incident_dispatch')
     .insert({
       incident_id: incidentId,
       responder_type: 'Hospital',
@@ -125,7 +125,7 @@ const createDispatch = async (incidentId, hospitalId) => {
 
 const findDispatchById = async (dispatchId) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
+    .from('incident_dispatch')
     .select('*')
     .eq('dispatch_id', dispatchId)
     .single();
@@ -137,7 +137,7 @@ const findDispatchById = async (dispatchId) => {
 
 const updateDispatchStatus = async (dispatchId, status) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
+    .from('incident_dispatch')
     .update({ dispatch_status: status })
     .eq('dispatch_id', dispatchId)
     .select()
@@ -149,7 +149,7 @@ const updateDispatchStatus = async (dispatchId, status) => {
 
 const resolveIncident = async (incidentId) => {
   const { error } = await supabase
-    .from('Incidents')
+    .from('incidents')
     .update({ resolved_at: new Date().toISOString(), is_active: false })
     .eq('incident_id', incidentId);
 
@@ -158,8 +158,8 @@ const resolveIncident = async (incidentId) => {
 
 const findDispatchesByHospitalId = async (hospitalId) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
-    .select('*, Incidents(latitude, longitude, detected_at, is_active)')
+    .from('incident_dispatch')
+    .select('*, incidents(latitude, longitude, detected_at, is_active)')
     .eq('hospital_id', hospitalId)
     .eq('responder_type', 'Hospital')
     .order('dispatched_at', { ascending: false });
@@ -170,8 +170,8 @@ const findDispatchesByHospitalId = async (hospitalId) => {
 
 const findDispatchesForIncident = async (incidentId) => {
   const { data, error } = await supabase
-    .from('Incident_Dispatch')
-    .select('*, Hospitals(hospital_name, phone)')
+    .from('incident_dispatch')
+    .select('*, hospitals(hospital_name, phone)')
     .eq('incident_id', incidentId)
     .eq('responder_type', 'Hospital');
 

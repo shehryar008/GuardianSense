@@ -31,7 +31,7 @@ You will work **only** with these tables:
 
 ### `Hospitals`
 ```sql
-CREATE TABLE Hospitals (
+CREATE TABLE hospitals (
     hospital_id   SERIAL PRIMARY KEY,
     hospital_name VARCHAR(150) NOT NULL,
     address       TEXT NOT NULL,
@@ -39,7 +39,8 @@ CREATE TABLE Hospitals (
     phone         VARCHAR(20) NOT NULL,
     email         VARCHAR(100) NOT NULL,
     bed_capacity  INT NOT NULL,
-    is_active     BOOLEAN DEFAULT TRUE
+    is_active     BOOLEAN DEFAULT TRUE,
+    password_hash VARCHAR(255) NOT NULL DEFAULT 'temp_password'
 );
 ```
 
