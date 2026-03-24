@@ -1,218 +1,156 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Sidebar } from "../../../../components/dashboard/sidebar"
 import { Header } from "../../../../components/dashboard/header"
-import { Card } from "../../../../components/ui/card"
-import { Button } from "../../../../components/ui/button"
-import { Input } from "../../../../components/ui/input"
-import { Search, Filter, FileText, FileSpreadsheet, Calendar, ChevronDown } from "lucide-react"
-
-const reports = [
-  { id: "R-2501", type: "Incident", department: "Police", date: "2025-10-07", status: "Completed", priority: "High" },
-  {
-    id: "R-2502",
-    type: "Medical",
-    department: "Hospital",
-    date: "2025-10-07",
-    status: "Completed",
-    priority: "Critical",
-  },
-  { id: "R-2503", type: "Incident", department: "Police", date: "2025-10-06", status: "Completed", priority: "Medium" },
-  {
-    id: "R-2504",
-    type: "Medical",
-    department: "Hospital",
-    date: "2025-10-06",
-    status: "In Progress",
-    priority: "High",
-  },
-  { id: "R-2505", type: "Combined", department: "Both", date: "2025-10-05", status: "Completed", priority: "Critical" },
-  { id: "R-2506", type: "Incident", department: "Police", date: "2025-10-05", status: "Completed", priority: "Low" },
-  {
-    id: "R-2507",
-    type: "Medical",
-    department: "Hospital",
-    date: "2025-10-04",
-    status: "Completed",
-    priority: "Medium",
-  },
-  { id: "R-2508", type: "Analytics", department: "Both", date: "2025-10-04", status: "Completed", priority: "Medium" },
-]
-
-const getPriorityStyle = (priority: string) => {
-  switch (priority) {
-    case "Critical":
-      return "bg-red-100 text-red-600"
-    case "High":
-      return "bg-orange-100 text-orange-600"
-    case "Medium":
-      return "bg-blue-100 text-blue-600"
-    case "Low":
-      return "bg-gray-100 text-gray-600"
-    default:
-      return "bg-gray-100 text-gray-600"
-  }
-}
-
-const getStatusStyle = (status: string) => {
-  switch (status) {
-    case "Completed":
-      return "text-green-600"
-    case "In Progress":
-      return "text-yellow-600"
-    default:
-      return "text-gray-600"
-  }
-}
+import { fetchReports, ReportData } from "../../../../src/lib/api"
+import { DownloadIcon } from "../../../../components/shared/icons"
 
 export default function ReportsPage() {
+  const [report, setReport] = useState<ReportData | null>(null)
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  const loadData = async () => {
+    try {
+      setIsLoading(true)
+      const res = await fetchReports()
+      if (res.success && res.data) {
+        setReport(res.data)
+      } else {
+        setError(res.message || "Failed to fetch reports")
+      }
+    } catch (err) {
+      setError("Network error")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    loadData()
+  }, [])
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />
       <div className="ml-[200px]">
         <Header />
         <main className="p-6">
-          {/* Page Title */}
-          <div className="mb-6">
-            <h1 className="text-2xl font-semibold text-gray-900">Report Generation</h1>
-            <p className="text-gray-500 text-sm">Create, filter, and export comprehensive reports</p>
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900">Incident Reports</h1>
+              <p className="text-gray-500 text-sm">System-wide incident data and statistics</p>
+            </div>
+            <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">
+              <DownloadIcon className="w-4 h-4" />
+              Export Full Report
+            </button>
           </div>
 
-          {/* Report Filters */}
-          <Card className="p-6 mb-6">
-            <h2 className="text-lg font-semibold text-gray-900 mb-4">Report Filters</h2>
-            <div className="grid grid-cols-4 gap-4 mb-4">
-              <div>
-                <label className="text-sm text-gray-500 mb-1 block">From Date</label>
-                <div className="relative">
-                  <Input type="text" placeholder="Pick a date" className="pl-10" />
-                  <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                </div>
-              </div>
-              <div>
-                <label className="text-sm text-gray-500 mb-1 block">To Date</label>
-                <div className="relative">
-                  <Input type="text" placeholder="Pick a date" className="pl-10" />
-                  <Calendar className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                </div>
-              </div>
-              <div>
-                <label className="text-sm text-gray-500 mb-1 block">Report Type</label>
-                <div className="relative">
-                  <select className="w-full h-10 px-3 pr-10 border border-gray-200 rounded-md bg-white text-sm appearance-none">
-                    <option>All Types</option>
-                    <option>Incident</option>
-                    <option>Medical</option>
-                    <option>Combined</option>
-                    <option>Analytics</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
-              <div>
-                <label className="text-sm text-gray-500 mb-1 block">Department</label>
-                <div className="relative">
-                  <select className="w-full h-10 px-3 pr-10 border border-gray-200 rounded-md bg-white text-sm appearance-none">
-                    <option>All Departments</option>
-                    <option>Police</option>
-                    <option>Hospital</option>
-                    <option>Both</option>
-                  </select>
-                  <ChevronDown className="w-4 h-4 absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-                </div>
-              </div>
+          {error && (
+            <div className="mb-4 p-3 bg-red-50 text-red-600 rounded-lg border border-red-200">
+              {error}
             </div>
-            <div className="flex gap-3">
-              <Button className="bg-purple-600 hover:bg-purple-700 text-white">
-                <Filter className="w-4 h-4 mr-2" />
-                Apply Filters
-              </Button>
-              <Button variant="outline">Reset</Button>
-            </div>
-          </Card>
+          )}
 
-          {/* Generated Reports */}
-          <Card className="p-6 mb-6">
-            <div className="flex items-center justify-between mb-4">
-              <h2 className="text-lg font-semibold text-gray-900">Generated Reports</h2>
-              <div className="flex items-center gap-3">
-                <div className="relative">
-                  <Input type="text" placeholder="Search reports..." className="pl-10 w-64" />
-                  <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+          {isLoading ? (
+            <div className="flex items-center justify-center p-12">
+              <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-violet-600"></div>
+            </div>
+          ) : report && (
+            <div className="space-y-6">
+              {/* Summary Cards */}
+              <div className="grid grid-cols-5 gap-4">
+                <div className="bg-white p-4 rounded-xl border border-gray-200">
+                  <p className="text-sm font-medium text-gray-500">Total Incidents</p>
+                  <p className="text-2xl font-bold text-gray-900 mt-2">{report.total_incidents}</p>
                 </div>
-                <Button variant="outline" size="sm">
-                  <FileText className="w-4 h-4 mr-1" />
-                  PDF
-                </Button>
-                <Button variant="outline" size="sm">
-                  <FileSpreadsheet className="w-4 h-4 mr-1" />
-                  CSV
-                </Button>
-                <Button variant="outline" size="sm">
-                  <FileSpreadsheet className="w-4 h-4 mr-1" />
-                  Excel
-                </Button>
+                <div className="bg-white p-4 rounded-xl border border-gray-200">
+                  <p className="text-sm font-medium text-gray-500">Active Incidents</p>
+                  <p className="text-2xl font-bold text-red-600 mt-2">{report.active_incidents}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-gray-200">
+                  <p className="text-sm font-medium text-gray-500">Resolved Incidents</p>
+                  <p className="text-2xl font-bold text-green-600 mt-2">{report.resolved_incidents}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-gray-200">
+                  <p className="text-sm font-medium text-gray-500">Hospital Dispatches</p>
+                  <p className="text-2xl font-bold text-blue-600 mt-2">{report.hospital_dispatches}</p>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-gray-200">
+                  <p className="text-sm font-medium text-gray-500">Police Dispatches</p>
+                  <p className="text-2xl font-bold text-blue-600 mt-2">{report.police_dispatches}</p>
+                </div>
+              </div>
+
+              {/* Data Table */}
+              <div className="bg-white rounded-xl border border-gray-200 overflow-hidden">
+                <div className="overflow-x-auto">
+                  <table className="w-full">
+                    <thead>
+                      <tr className="bg-gray-50 border-b border-gray-200">
+                        <th className="text-left py-3 px-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">ID</th>
+                        <th className="text-left py-3 px-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">Date Detected</th>
+                        <th className="text-left py-3 px-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">Resolution Time</th>
+                        <th className="text-left py-3 px-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">Dispatches</th>
+                        <th className="text-left py-3 px-6 text-xs font-semibold text-gray-500 uppercase tracking-wider">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-gray-200">
+                      {report.incidents.map((incident) => {
+                        // Calculate resolution time if resolved
+                        let resTime = "N/A"
+                        if (incident.resolved_at && incident.detected_at) {
+                          const diffMs = new Date(incident.resolved_at).getTime() - new Date(incident.detected_at).getTime()
+                          const diffMins = Math.round(diffMs / 60000)
+                          resTime = `${diffMins} min`
+                        }
+
+                        return (
+                          <tr key={incident.incident_id} className="hover:bg-gray-50 transition-colors">
+                            <td className="py-4 px-6 text-sm font-medium text-gray-900">INC-{incident.incident_id}</td>
+                            <td className="py-4 px-6 text-sm text-gray-600">
+                              {new Date(incident.detected_at).toLocaleString()}
+                            </td>
+                            <td className="py-4 px-6 text-sm text-gray-600">{resTime}</td>
+                            <td className="py-4 px-6 text-sm text-gray-600">
+                              <div className="flex flex-col gap-1">
+                                {incident.incident_dispatch?.map((d: any) => (
+                                  <span key={d.dispatch_id} className="text-xs">
+                                    • {d.responder_type} ({d.dispatch_status})
+                                  </span>
+                                ))}
+                                {!incident.incident_dispatch || incident.incident_dispatch.length === 0 ? "None" : ""}
+                              </div>
+                            </td>
+                            <td className="py-4 px-6">
+                              <span
+                                className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium border ${
+                                  incident.is_active
+                                    ? "bg-red-50 text-red-700 border-red-200"
+                                    : "bg-green-50 text-green-700 border-green-200"
+                                }`}
+                              >
+                                {incident.is_active ? "Active" : "Resolved"}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                      {report.incidents.length === 0 && (
+                        <tr>
+                          <td colSpan={5} className="py-8 text-center text-gray-500 text-sm">
+                            No incidents found.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
               </div>
             </div>
-
-            {/* Table */}
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="border-b border-gray-200">
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Report ID</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Type</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Department</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Date</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Status</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Priority</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-gray-500">Actions</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {reports.map((report) => (
-                    <tr key={report.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-3 px-4 text-sm text-gray-900">{report.id}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{report.type}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{report.department}</td>
-                      <td className="py-3 px-4 text-sm text-gray-600">{report.date}</td>
-                      <td className={`py-3 px-4 text-sm ${getStatusStyle(report.status)}`}>{report.status}</td>
-                      <td className="py-3 px-4">
-                        <span className={`text-xs px-2 py-1 rounded-full ${getPriorityStyle(report.priority)}`}>
-                          {report.priority}
-                        </span>
-                      </td>
-                      <td className="py-3 px-4">
-                        <div className="flex gap-2">
-                          <button className="text-sm text-gray-600 hover:text-purple-600">View</button>
-                          <button className="text-sm text-gray-600 hover:text-purple-600">Download</button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </Card>
-
-          {/* Stats Cards */}
-          <div className="grid grid-cols-3 gap-4">
-            <Card className="p-6">
-              <p className="text-sm text-gray-500 mb-1">Total Reports Generated</p>
-              <p className="text-3xl font-semibold text-gray-900">1,247</p>
-              <p className="text-sm text-gray-400 mt-2">Last 30 days</p>
-            </Card>
-            <Card className="p-6">
-              <p className="text-sm text-gray-500 mb-1">Average Generation Time</p>
-              <p className="text-3xl font-semibold text-gray-900">2.3s</p>
-              <p className="text-sm text-green-500 mt-2">↓ 0.5s improvement</p>
-            </Card>
-            <Card className="p-6">
-              <p className="text-sm text-gray-500 mb-1">Most Requested Type</p>
-              <p className="text-3xl font-semibold text-gray-900">Incident</p>
-              <p className="text-sm text-gray-400 mt-2">456 requests</p>
-            </Card>
-          </div>
+          )}
         </main>
       </div>
     </div>
