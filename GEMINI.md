@@ -213,7 +213,140 @@ You are allowed to edit frontend files **only** if:
 
 ---
 
+### Phase 0 — Frontend Field Audit + Supabase Schema Verification ⚠️ DO THIS FIRST
+
+> **This phase is mandatory and must be completed before writing a single line of backend code.**
+> Do not skip or abbreviate it. The backend implementation depends entirely on what you find here.
+
+#### Step 1 — Extract Every Field Used in the Frontend
+
+Open **every** Hospital-related frontend file (components, forms, API service files, hooks, pages) and build a complete field inventory:
+
+| What to extract | Where to look |
+|---|---|
+| Every field sent in a request body | Forms, `POST`/`PUT`/`PATCH` API calls, state objects |
+| Every field read from a response | Table renders, detail views, conditional logic, destructuring |
+| Every URL param or query param | Route definitions, `useParams()`, dynamic URL builders |
+| Field names and exact casing | camelCase? snake_case? Note exactly as written |
+| Data types expected | string, number, boolean, array, nested object |
+
+Produce a consolidated list like this:
+
+```
+FRONTEND FIELD INVENTORY
+========================
+Forms / Request Bodies:
+  - hospital_name     (string)
+  - address           (string)
+  - city              (string)
+  - phone             (string)
+  - email             (string)
+  - bed_capacity      (number)
+  - [any other fields the frontend sends]
+
+Response Fields Read:
+  - hospital_id       (number)
+  - hospital_name     (string)
+  - is_active         (boolean)
+  - [any other fields the frontend reads]
+
+Dispatch Fields:
+  - incident_id       (number)
+  - hospital_id       (number)
+  - dispatch_status   (string)
+  - [any other dispatch fields]
+```
+
+---
+
+#### Step 2 — Cross-Check Every Field Against the Supabase Database Schema
+
+Once you have the full frontend field inventory, open the Supabase dashboard (or query `information_schema.columns`) and verify **each field** exists in the correct table with the correct column name and data type.
+
+Check these tables:
+- `hospitals`
+- `incidents`
+- `incident_dispatch`
+
+For every frontend field, determine:
+
+| Frontend Field | Expected Table | Column Exists in Supabase? | Type Match? |
+|---|---|---|---|
+| `hospital_name` | `hospitals` | ✅ / ❌ | ✅ / ❌ |
+| `bed_capacity` | `hospitals` | ✅ / ❌ | ✅ / ❌ |
+| `dispatch_status` | `incident_dispatch` | ✅ / ❌ | ✅ / ❌ |
+| *(every other field)* | ... | ... | ... |
+
+---
+
+#### Step 3 — Report Missing or Mismatched Fields — STOP AND ASK
+
+If **any** frontend field is missing from the Supabase schema, or if there is a name/type mismatch:
+
+> **⛔ STOP. Do not proceed with backend implementation.**
+
+Report the gap clearly and ask for confirmation before continuing:
+
+```
+⚠️  SCHEMA GAP FOUND — ACTION REQUIRED BEFORE PROCEEDING
+
+The following fields are used by the Hospital frontend but are MISSING
+from the current Supabase database schema:
+
+  Table: hospitals
+  Missing columns:
+    - [field_name]  (expected type: [type])
+    - [field_name]  (expected type: [type])
+
+  Table: incident_dispatch
+  Missing columns:
+    - [field_name]  (expected type: [type])
+
+Please add these columns to the Supabase tables before I continue.
+Once you confirm the schema has been updated, I will proceed with
+backend implementation.
+```
+
+**Do not attempt to work around missing columns.** Do not rename fields in the backend to cover up a schema gap. Do not assume the column will be added later. Ask now, wait for confirmation, then proceed.
+
+Only when **all frontend fields are verified present in Supabase** should you move to Phase 1.
+
+---
+
+#### Step 4 — Document the Verified Field Map
+
+Before moving on, write down the confirmed mapping. This becomes the contract that the backend is built against:
+
+```
+VERIFIED FIELD CONTRACT
+=======================
+hospitals table     ↔  frontend field name  ↔  validator rule
+--------------------------------------------------------------
+hospital_id         ↔  hospital_id          ↔  positive integer (response only)
+hospital_name       ↔  hospital_name        ↔  required, string, max 150
+address             ↔  address              ↔  required, string
+city                ↔  city                 ↔  required, string, max 100
+phone               ↔  phone                ↔  required, string, max 20
+email               ↔  email                ↔  required, valid email
+bed_capacity        ↔  bed_capacity         ↔  required, integer, min 1
+is_active           ↔  is_active            ↔  boolean (response only)
+
+incident_dispatch table  ↔  frontend field  ↔  validator rule
+--------------------------------------------------------------
+dispatch_id         ↔  dispatch_id          ↔  positive integer (response only)
+incident_id         ↔  incident_id          ↔  required, positive integer
+hospital_id         ↔  hospital_id          ↔  required, positive integer
+dispatch_status     ↔  dispatch_status      ↔  'Pending' | 'En Route' | 'Resolved'
+dispatched_at       ↔  dispatched_at        ↔  timestamp (response only)
+```
+
+> This document is your single source of truth. Every validator, every repository query, and every response shape must match it exactly.
+
+---
+
 ### Phase 1 — Audit the Frontend BEFORE Writing Any Backend Code
+
+> ✅ You may only begin Phase 1 after Phase 0 is fully complete and all schema gaps are resolved.
 
 Before writing a single backend file, open every Hospital-related frontend file and document:
 
@@ -345,6 +478,12 @@ Work through every category. Fix everything you find.
 
 Every item must be checked before the task is done.
 
+**Pre-Implementation (Phase 0)**
+- [ ] All Hospital frontend fields inventoried and documented
+- [ ] Every field cross-checked against Supabase schema — no missing columns
+- [ ] Any schema gaps reported and confirmed resolved before proceeding
+- [ ] Verified field contract written and used as the implementation reference
+
 **Backend**
 - [ ] All 10 routes implemented and mounted in `app.js` / `server.js`
 - [ ] CORS configured to accept the frontend's origin
@@ -402,15 +541,16 @@ If you find a bug in the Police or Admin frontend — **report it, do not fix it
 
 Your task is complete **only when ALL of the following are true**:
 
-1. All 10 backend endpoints implemented, working, and tested
-2. Backend file structure matches the 6-file module layout exactly
-3. All input validation returns correct HTTP status codes
-4. Dispatch business logic enforced without exception
-5. Frontend calls every Hospital endpoint successfully with **zero browser console errors**
-6. Every frontend bug discovered during integration is found and fixed (Hospital scope only)
-7. UI correctly shows loading states, error messages, and updated data after every action
-8. Auth tokens correctly attached wherever required
-9. No stubs, no `TODO` comments, no hardcoded values anywhere
-10. All tests pass
+1. All Hospital frontend fields audited and verified present in Supabase — no schema gaps remain
+2. All 10 backend endpoints implemented, working, and tested
+3. Backend file structure matches the 6-file module layout exactly
+4. All input validation returns correct HTTP status codes
+5. Dispatch business logic enforced without exception
+6. Frontend calls every Hospital endpoint successfully with **zero browser console errors**
+7. Every frontend bug discovered during integration is found and fixed (Hospital scope only)
+8. UI correctly shows loading states, error messages, and updated data after every action
+9. Auth tokens correctly attached wherever required
+10. No stubs, no `TODO` comments, no hardcoded values anywhere
+11. All tests pass
 
 > **One broken UI interaction or one incomplete backend endpoint = task is NOT done. No exceptions.**
