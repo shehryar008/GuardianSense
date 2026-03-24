@@ -4,13 +4,17 @@ const express = require('express');
 const cors = require('cors');
 const hospitalRoutes = require('./src/modules/hospital/hospital.routes');
 const authRoutes = require('./src/modules/auth/auth.routes');
+const adminRoutes = require('./src/modules/admin/admin.routes');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3001',
+  origin: [
+    process.env.FRONTEND_URL || 'http://localhost:3001',
+    process.env.ADMIN_FRONTEND_URL || 'http://localhost:3000',
+  ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
 }));
@@ -24,6 +28,7 @@ app.get('/api/health', (req, res) => {
 // Routes
 app.use('/api/auth', authRoutes);
 app.use('/api/hospitals', hospitalRoutes);
+app.use('/api/admin', adminRoutes);
 
 // 404 handler
 app.use((req, res) => {
