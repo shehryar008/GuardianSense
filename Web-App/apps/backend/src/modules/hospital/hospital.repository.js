@@ -25,10 +25,10 @@ const findById = async (id) => {
   return data;
 };
 
-const create = async ({ hospital_name, address, city, phone, email, bed_capacity }) => {
+const create = async ({ hospital_name, address, city, phone, email, bed_capacity, password }) => {
   const { data, error } = await supabase
     .from('hospitals')
-    .insert({ hospital_name, address, city, phone, email, bed_capacity })
+    .insert({ hospital_name, address, city, phone, email, bed_capacity, is_active: false, password_hash: password || 'temp_password' })
     .select()
     .single();
 

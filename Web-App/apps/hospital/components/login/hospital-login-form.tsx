@@ -3,8 +3,8 @@
 import type React from "react"
 
 import { useState } from "react"
-import { useRouter } from "next/navigation"
 import { UserIcon, LockIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from "../shared/icons"
+import { useAuth } from "../auth/auth-provider"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
 
@@ -14,7 +14,7 @@ export function HospitalLoginForm() {
   const [password, setPassword] = useState("")
   const [error, setError] = useState("")
   const [isLoading, setIsLoading] = useState(false)
-  const router = useRouter()
+  const { login } = useAuth()
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -35,13 +35,8 @@ export function HospitalLoginForm() {
         return
       }
 
-      localStorage.setItem("token", data.data.session.access_token)
-      localStorage.setItem("refresh_token", data.data.session.refresh_token)
-      if (data.data.hospital) {
-        localStorage.setItem("hospital", JSON.stringify(data.data.hospital))
-      }
-
-      router.push("/dashboard")
+      // Use AuthProvider's login — updates state + localStorage + triggers redirect
+      login(data.data.session.access_token, data.data.session.refresh_token, data.data.hospital || null)
     } catch (err) {
       setError("Unable to connect to server. Please try again.")
     } finally {

@@ -7,6 +7,7 @@ interface AuthContextType {
   token: string | null
   hospital: Record<string, unknown> | null
   isAuthenticated: boolean
+  login: (token: string, refreshToken: string, hospital: Record<string, unknown> | null) => void
   logout: () => void
 }
 
@@ -14,6 +15,7 @@ const AuthContext = createContext<AuthContextType>({
   token: null,
   hospital: null,
   isAuthenticated: false,
+  login: () => {},
   logout: () => {},
 })
 
@@ -62,6 +64,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [token, pathname, isLoading, router])
 
+  const login = (newToken: string, refreshToken: string, hospitalData: Record<string, unknown> | null) => {
+    // Update localStorage
+    localStorage.setItem("token", newToken)
+    localStorage.setItem("refresh_token", refreshToken)
+    if (hospitalData) {
+      localStorage.setItem("hospital", JSON.stringify(hospitalData))
+    }
+    // Update React state — this triggers the useEffect to redirect to dashboard
+    setToken(newToken)
+    setHospital(hospitalData)
+  }
+
   const logout = () => {
     localStorage.removeItem("token")
     localStorage.removeItem("refresh_token")
@@ -87,7 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   return (
-    <AuthContext.Provider value={{ token, hospital, isAuthenticated: !!token, logout }}>
+    <AuthContext.Provider value={{ token, hospital, isAuthenticated: !!token, login, logout }}>
       {children}
     </AuthContext.Provider>
   )

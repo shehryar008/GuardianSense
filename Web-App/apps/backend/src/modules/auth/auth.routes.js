@@ -36,6 +36,24 @@ router.post(
         .eq('is_active', true)
         .maybeSingle();
 
+      // Check if hospital exists but is inactive (pending admin approval)
+      if (!hospital) {
+        const { data: inactiveHospital } = await supabase
+          .from('hospitals')
+          .select('hospital_id')
+          .eq('email', email)
+          .eq('is_active', false)
+          .maybeSingle();
+
+        if (inactiveHospital) {
+          return res.status(403).json({
+            success: false,
+            message: 'Your hospital registration is pending admin approval. Please wait for activation.',
+            error: 'Hospital is not active',
+          });
+        }
+      }
+
       // Try to sign in via Supabase Auth
       let { data, error } = await supabase.auth.signInWithPassword({
         email,
