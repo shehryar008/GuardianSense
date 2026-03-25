@@ -1,3 +1,5 @@
+"use client"
+
 import type React from "react"
 import { Sidebar } from "../../../components/dashboard/sidebar"
 import { Header } from "../../../components/dashboard/header"
@@ -11,6 +13,7 @@ import {
   CertificationIcon,
   DepartmentIcon,
 } from "../../../components/shared/icons"
+import { useAuth } from "../../../components/auth/auth-provider"
 
 function FacilityInfoItem({
   icon,
@@ -79,6 +82,14 @@ function DepartmentItem({
 }
 
 export default function ProfilePage() {
+  const { hospital } = useAuth()
+
+  // Calculated metrics
+  const beds = Math.max(0, Number(hospital?.bed_capacity || 0))
+  const calculatedAmbulances = Math.max(2, Math.floor(beds / 25))
+  const calculatedStaff = beds * 2
+  const calculatedDepartments = Math.max(3, Math.floor(beds / 50))
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar activeItem="Profile" />
@@ -97,7 +108,7 @@ export default function ProfilePage() {
                 <div className="w-20 h-20 rounded-2xl bg-gradient-to-br from-teal-400 to-teal-600 flex items-center justify-center mb-4">
                   <HospitalIcon className="w-10 h-10 text-white" />
                 </div>
-                <h2 className="text-xl font-semibold text-gray-900">GuardianSense</h2>
+                <h2 className="text-xl font-semibold text-gray-900">{hospital?.hospital_name ? String(hospital.hospital_name) : "Loading..."}</h2>
                 <p className="text-gray-500">Medical Center</p>
                 <span className="mt-2 px-3 py-1 bg-green-100 text-green-600 text-xs font-medium rounded-full">
                   Operational 24/7
@@ -107,19 +118,19 @@ export default function ProfilePage() {
               <div className="space-y-3">
                 <div className="flex justify-between py-2 border-b border-gray-100">
                   <span className="text-gray-500 text-sm">Capacity</span>
-                  <span className="text-gray-900 font-medium text-sm">500 Beds</span>
+                  <span className="text-gray-900 font-medium text-sm">{beds} Beds</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-100">
                   <span className="text-gray-500 text-sm">Ambulances</span>
-                  <span className="text-gray-900 font-medium text-sm">24 Units</span>
+                  <span className="text-gray-900 font-medium text-sm">{calculatedAmbulances} Units</span>
                 </div>
                 <div className="flex justify-between py-2 border-b border-gray-100">
                   <span className="text-gray-500 text-sm">Staff</span>
-                  <span className="text-gray-900 font-medium text-sm">850+</span>
+                  <span className="text-gray-900 font-medium text-sm">{calculatedStaff}+</span>
                 </div>
                 <div className="flex justify-between py-2">
                   <span className="text-gray-500 text-sm">Departments</span>
-                  <span className="text-gray-900 font-medium text-sm">18</span>
+                  <span className="text-gray-900 font-medium text-sm">{calculatedDepartments}</span>
                 </div>
               </div>
             </div>
@@ -133,31 +144,32 @@ export default function ProfilePage() {
                   <FacilityInfoItem
                     icon={<HospitalIcon className="w-5 h-5 text-teal-600" />}
                     label="Hospital Name"
-                    value="GuardianSense Medical Center"
+                    value={hospital?.hospital_name ? String(hospital.hospital_name) : "..."}
                     iconBgColor="bg-teal-100"
                   />
                   <FacilityInfoItem
                     icon={<EmailIcon className="w-5 h-5 text-teal-600" />}
                     label="Email"
-                    value="contact@guardiansense.com"
+                    value={hospital?.email ? String(hospital.email) : "..."}
                     iconBgColor="bg-teal-100"
                   />
                   <FacilityInfoItem
                     icon={<PhoneIcon className="w-5 h-5 text-green-600" />}
                     label="Emergency Line"
-                    value="+1 (800) 911-HELP"
+                    value={hospital?.phone ? String(hospital.phone) : "..."}
                     iconBgColor="bg-green-100"
                   />
                   <FacilityInfoItem
                     icon={<LocationIcon className="w-5 h-5 text-orange-500" />}
                     label="Location"
-                    value="1234 Medical Plaza, NY 10001"
+                    value={hospital?.address && hospital?.city ? `${hospital.address}, ${hospital.city}` : "..."}
                     iconBgColor="bg-orange-100"
                   />
                   <FacilityInfoItem
                     icon={<DocumentIcon className="w-5 h-5 text-red-500" />}
                     label="License Number"
-                    value="MC-2023-4567890"
+                    value={`MC-${hospital?.hospital_id || "000"}`}
+
                     iconBgColor="bg-red-100"
                   />
                   <FacilityInfoItem

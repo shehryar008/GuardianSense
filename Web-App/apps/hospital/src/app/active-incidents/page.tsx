@@ -1,41 +1,51 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Sidebar } from "../../../components/dashboard/sidebar"
 import { Header } from "../../../components/dashboard/header"
 import { ActiveIncidentCard } from "../../../components/active-incidents/active-incident-card"
+import { useAuth } from "../../../components/auth/auth-provider"
 
-const incidents = [
-  {
-    id: 1,
-    title: "Vehicle Collision",
-    priority: "critical" as const,
-    location: "Highway 9A Main Rd",
-    responders: "3 units",
-    eta: "2 min",
-    casualties: "Multiple",
-    status: "In Progress" as const,
-  },
-  {
-    id: 2,
-    title: "Cardiac Emergency",
-    priority: "high" as const,
-    location: "E Main West Road, CA",
-    responders: "2 units",
-    eta: "5 min",
-    casualties: "1 patient",
-    status: "Dispatched" as const,
-  },
-  {
-    id: 3,
-    title: "Fire Hazard",
-    priority: "medium" as const,
-    location: "W 6TH ST, 3rd-20th",
-    responders: "4 units",
-    eta: "8 min",
-    casualties: "Unknown",
-    status: "En Route" as const,
-  },
-]
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
 
 export default function ActiveIncidentsPage() {
+  const { hospital, token } = useAuth()
+  const [activeDispatches, setActiveDispatches] = useState<Record<string, unknown>[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
+
+  useEffect(() => {
+    if (!hospital?.hospital_id || !token) return
+
+    const fetchDispatches = async () => {
+      try {
+        setIsLoading(true)
+        const res = await fetch(`${API_URL}/api/hospitals/${hospital.hospital_id}/dispatches`, {
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+        })
+        const data = await res.json()
+        if (data.success) {
+          // Filter only active dispatches (Pending, En Route)
+          const active = data.data.filter(
+            (d: Record<string, unknown>) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route"
+          )
+          setActiveDispatches(active)
+        } else {
+          setError(data.message || "Failed to fetch dispatches")
+        }
+      } catch {
+        setError("Network error fetching dispatches")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchDispatches()
+  }, [hospital?.hospital_id, token])
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar activeItem="Active Incidents" />
@@ -48,21 +58,40 @@ export default function ActiveIncidentsPage() {
             <p className="text-gray-500 mt-1">Currently active emergency situations requiring immediate attention</p>
           </div>
 
+          {error && (
+            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg text-red-600 font-medium">
+              {error}
+            </div>
+          )}
+
           {/* Incident cards */}
-          <div className="space-y-4">
-            {incidents.map((incident) => (
-              <ActiveIncidentCard
-                key={incident.id}
-                title={incident.title}
-                priority={incident.priority}
-                location={incident.location}
-                responders={incident.responders}
-                eta={incident.eta}
-                casualties={incident.casualties}
-                status={incident.status}
-              />
-            ))}
-          </div>
+          {isLoading ? (
+            <div className="text-gray-500">Loading active incidents...</div>
+          ) : activeDispatches.length === 0 ? (
+            <div className="text-gray-500">No active incidents found.</div>
+          ) : (
+            <div className="space-y-4">
+              {activeDispatches.map((dispatch) => {
+                const incidents = dispatch.incidents as Record<string, unknown> | undefined
+                return (
+                  <ActiveIncidentCard
+                    key={String(dispatch.dispatch_id)}
+                    title={`Incident #${dispatch.incident_id}`}
+                    priority={dispatch.dispatch_status === "Pending" ? "critical" : "medium"}
+                    location={
+                      incidents?.latitude && incidents?.longitude
+                        ? `${Number(incidents.latitude).toFixed(4)}, ${Number(incidents.longitude).toFixed(4)}`
+                        : "Unknown Location"
+                    }
+                    responders="Hospital Response"
+                    eta="Calculating..."
+                    casualties="-"
+                    status={dispatch.dispatch_status as "In Progress" | "Dispatched" | "En Route"}
+                  />
+                )
+              })}
+            </div>
+          )}
         </main>
       </div>
     </div>

@@ -37,7 +37,7 @@ export function HospitalLoginForm() {
 
       // Use AuthProvider's login — updates state + localStorage + triggers redirect
       login(data.data.session.access_token, data.data.session.refresh_token, data.data.hospital || null)
-    } catch (err) {
+    } catch {
       setError("Unable to connect to server. Please try again.")
     } finally {
       setIsLoading(false)
