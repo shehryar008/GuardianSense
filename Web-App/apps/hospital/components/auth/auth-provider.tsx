@@ -37,6 +37,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const storedHospital = localStorage.getItem("hospital")
 
     if (storedToken) {
+      // eslint-disable-next-line
       setToken(storedToken)
       if (storedHospital) {
         try {
