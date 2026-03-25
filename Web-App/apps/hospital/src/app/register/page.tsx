@@ -118,7 +118,7 @@ export default function HospitalRegistrationPage() {
       setTimeout(() => {
         router.push("/login")
       }, 2000)
-    } catch (err) {
+    } catch {
       setError("Unable to connect to server. Please try again.")
     } finally {
       setIsLoading(false)
