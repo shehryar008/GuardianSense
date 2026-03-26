@@ -11,25 +11,43 @@ import {
 } from "../shared/icons"
 import Link from "next/link"
 import { useAuth } from "../auth/auth-provider"
-
-const navItems = [
-  { icon: LayoutDashboardIcon, label: "Dashboard", href: "/dashboard" },
-  { icon: AlertTriangleIcon, label: "Active Incidents", badge: 3, href: "/active-incidents" },
-  { icon: AmbulanceIcon, label: "Ambulance Fleet", href: "/ambulance-fleet" },
-  { icon: HistoryIcon, label: "Incident History", href: "/incident-history" },
-  { icon: UserIcon, label: "Profile", href: "/profile" },
-  { icon: SettingsIcon, label: "Settings", href: "/settings" },
-]
+import { useEffect, useState } from "react"
 
 interface SidebarProps {
   activeItem?: string
 }
 
 export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
-  const { logout } = useAuth()
+  const { logout, hospital, token } = useAuth()
+  const [activeCount, setActiveCount] = useState(0)
+
+  useEffect(() => {
+    if (!hospital?.hospital_id || !token) return
+    const fetchActiveDispatches = async () => {
+      try {
+        const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"}/api/hospitals/${hospital.hospital_id}/dispatches`
+        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
+        const data = await res.json()
+        if (data.success) {
+          const count = data.data.filter((d: any) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route").length
+          setActiveCount(count)
+        }
+      } catch (e) {}
+    }
+    fetchActiveDispatches()
+  }, [hospital?.hospital_id, token])
+
+  const navItems = [
+    { icon: LayoutDashboardIcon, label: "Dashboard", href: "/dashboard" },
+    { icon: AlertTriangleIcon, label: "Active Incidents", badge: activeCount, href: "/active-incidents" },
+    { icon: AmbulanceIcon, label: "Ambulance Fleet", href: "/ambulance-fleet" },
+    { icon: HistoryIcon, label: "Incident History", href: "/incident-history" },
+    { icon: UserIcon, label: "Profile", href: "/profile" },
+    { icon: SettingsIcon, label: "Settings", href: "/settings" },
+  ]
 
   return (
-    <aside className="w-64 bg-gradient-to-b from-teal-600 to-teal-700 min-h-screen p-4 flex flex-col">
+    <aside className="sticky top-0 h-screen flex-shrink-0 overflow-y-auto w-64 bg-gradient-to-b from-teal-600 to-teal-700 p-4 flex flex-col">
       {/* Logo */}
       <div className="flex items-center gap-3 mb-8 px-2">
         <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
@@ -55,7 +73,7 @@ export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
             >
               <item.icon className="w-5 h-5" />
               <span>{item.label}</span>
-              {item.badge && (
+              {item.badge !== undefined && item.badge > 0 && (
                 <span
                   className={`ml-auto text-xs px-2 py-0.5 rounded-full ${
                     isActive ? "bg-gray-900 text-white" : "bg-red-500 text-white"
@@ -72,7 +90,7 @@ export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
       {/* Logout */}
       <button
         onClick={logout}
-        className="flex items-center gap-3 px-4 py-3 rounded-xl text-teal-100 hover:bg-red-500/20 hover:text-white transition-all mt-2"
+        className="flex items-center gap-3 px-4 py-3 rounded-xl bg-red-500 text-white hover:bg-red-600 transition-all mt-auto shadow-md font-medium"
       >
         <LogOutIcon className="w-5 h-5" />
         <span>Logout</span>

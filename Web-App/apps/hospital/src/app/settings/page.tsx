@@ -41,9 +41,12 @@ function SettingRow({
   )
 }
 
-function SettingButton({ title, description }: { title: string; description: string }) {
+function SettingButton({ title, description, onClick }: { title: string; description: string; onClick?: () => void }) {
   return (
-    <button className="w-full flex items-center justify-between py-3 px-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors">
+    <button 
+      onClick={onClick}
+      className="w-full flex items-center justify-between py-3 px-4 bg-gray-50 rounded-lg hover:bg-gray-100 transition-colors"
+    >
       <div className="text-left">
         <p className="text-sm font-medium text-gray-900">{title}</p>
         <p className="text-xs text-gray-500">{description}</p>
@@ -83,10 +86,10 @@ function SectionCard({
 }
 
 export default function SettingsPage() {
-  const [emailNotifications, setEmailNotifications] = useState(true)
   const [pushNotifications, setPushNotifications] = useState(true)
-  const [smsNotifications, setSmsNotifications] = useState(false)
   const [darkMode, setDarkMode] = useState(false)
+  const [language, setLanguage] = useState("English (US)")
+  const [timezone, setTimezone] = useState("Eastern Time (ET)")
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -118,22 +121,10 @@ export default function SettingsPage() {
             >
               <div className="divide-y divide-gray-100">
                 <SettingRow
-                  title="Email Notifications"
-                  description="Receive incident alerts via email"
-                  enabled={emailNotifications}
-                  onChange={() => setEmailNotifications(!emailNotifications)}
-                />
-                <SettingRow
                   title="Push Notifications"
                   description="Get real-time alerts on your device"
                   enabled={pushNotifications}
                   onChange={() => setPushNotifications(!pushNotifications)}
-                />
-                <SettingRow
-                  title="SMS Notifications"
-                  description="Receive critical alerts via text message"
-                  enabled={smsNotifications}
-                  onChange={() => setSmsNotifications(!smsNotifications)}
                 />
               </div>
             </SectionCard>
@@ -179,9 +170,16 @@ export default function SettingsPage() {
               description="Manage your account security settings"
             >
               <div className="space-y-3">
-                <SettingButton title="Change Password" description="Update your account password" />
-                <SettingButton title="Two-Factor Authentication" description="Add an extra layer of security" />
-                <SettingButton title="Active Sessions" description="Manage your logged-in devices" />
+                <SettingButton 
+                  title="Change Password" 
+                  description="Update your account password" 
+                  onClick={() => alert("Password change functionality coming soon")} 
+                />
+                <SettingButton 
+                  title="Active Sessions" 
+                  description="Manage your logged-in devices" 
+                  onClick={() => alert("Session management coming soon")} 
+                />
               </div>
             </SectionCard>
 
@@ -204,7 +202,11 @@ export default function SettingsPage() {
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm text-gray-600 mb-2">Language</label>
-                  <select className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  <select 
+                    value={language}
+                    onChange={(e) => setLanguage(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
                     <option>English (US)</option>
                     <option>Spanish</option>
                     <option>French</option>
@@ -212,7 +214,11 @@ export default function SettingsPage() {
                 </div>
                 <div>
                   <label className="block text-sm text-gray-600 mb-2">Timezone</label>
-                  <select className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500">
+                  <select 
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                  >
                     <option>Eastern Time (ET)</option>
                     <option>Pacific Time (PT)</option>
                     <option>Central Time (CT)</option>
