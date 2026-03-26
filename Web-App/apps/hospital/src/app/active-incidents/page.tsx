@@ -46,6 +46,30 @@ export default function ActiveIncidentsPage() {
     fetchDispatches()
   }, [hospital?.hospital_id, token])
 
+  const handleResolve = async (dispatchId: number | string, currentStatus: string) => {
+    try {
+      if (currentStatus === "Pending") {
+        const p1 = await fetch(`${API_URL}/api/hospitals/dispatch/${dispatchId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ dispatch_status: "En Route" })
+        });
+        if (!p1.ok) throw new Error("Failed to update status to En Route");
+      }
+      
+      const p2 = await fetch(`${API_URL}/api/hospitals/dispatch/${dispatchId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ dispatch_status: "Resolved" })
+      });
+      if (!p2.ok) throw new Error("Failed to update status to Resolved");
+      
+      window.location.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error resolving incident");
+    }
+  };
+
   return (
     <div className="flex min-h-screen bg-gray-50">
       <Sidebar activeItem="Active Incidents" />
@@ -77,7 +101,6 @@ export default function ActiveIncidentsPage() {
                   <ActiveIncidentCard
                     key={String(dispatch.dispatch_id)}
                     title={`Incident #${dispatch.incident_id}`}
-                    priority={dispatch.dispatch_status === "Pending" ? "critical" : "medium"}
                     location={
                       incidents?.latitude && incidents?.longitude
                         ? `${Number(incidents.latitude).toFixed(4)}, ${Number(incidents.longitude).toFixed(4)}`
@@ -87,6 +110,7 @@ export default function ActiveIncidentsPage() {
                     eta="Calculating..."
                     casualties="-"
                     status={dispatch.dispatch_status as "In Progress" | "Dispatched" | "En Route"}
+                    onResolve={() => handleResolve(String(dispatch.dispatch_id), String(dispatch.dispatch_status))}
                   />
                 )
               })}
