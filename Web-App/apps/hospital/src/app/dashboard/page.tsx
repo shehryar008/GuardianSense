@@ -45,6 +45,30 @@ export default function HospitalDashboard() {
     fetchDispatches()
   }, [hospital?.hospital_id, token])
 
+  const handleResolve = async (dispatchId: number | string, currentStatus: string) => {
+    try {
+      if (currentStatus === "Pending") {
+        const p1 = await fetch(`${API_URL}/api/hospitals/dispatch/${dispatchId}/status`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+          body: JSON.stringify({ dispatch_status: "En Route" })
+        });
+        if (!p1.ok) throw new Error("Failed to update status to En Route");
+      }
+      
+      const p2 = await fetch(`${API_URL}/api/hospitals/dispatch/${dispatchId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ dispatch_status: "Resolved" })
+      });
+      if (!p2.ok) throw new Error("Failed to update status to Resolved");
+      
+      window.location.reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error resolving incident");
+    }
+  };
+
   // Stat calculations
   const totalIncidents = dispatches.length
   const activeDispatches = dispatches.filter((d: Record<string, unknown>) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route").length
@@ -126,11 +150,11 @@ export default function HospitalDashboard() {
                   return (
                     <IncidentCard
                       key={String(dispatch.dispatch_id)}
-                      priority={dispatch.dispatch_status === "Pending" ? "CRITICAL" : dispatch.dispatch_status === "En Route" ? "MEDIUM" : "LOW"}
                       title={`Incident #${dispatch.incident_id}`}
                       description={`Status: ${dispatch.dispatch_status}`}
                       location={incidents?.latitude && incidents?.longitude ? `${Number(incidents.latitude).toFixed(4)}, ${Number(incidents.longitude).toFixed(4)}` : "Unknown Location"}
                       time={dispatch.dispatched_at ? new Date(String(dispatch.dispatched_at)).toLocaleString() : "Unknown"}
+                      onResolve={dispatch.dispatch_status === "Resolved" ? undefined : () => handleResolve(String(dispatch.dispatch_id), String(dispatch.dispatch_status))}
                     />
                   )
                 })}
