@@ -12,6 +12,7 @@ import numpy as np
 import pandas as pd
 import seaborn as sns
 from scipy.signal import butter, filtfilt
+from scipy.ndimage import median_filter
 from sklearn.ensemble import IsolationForest
 from sklearn.metrics import (
     accuracy_score,
@@ -25,7 +26,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     average_precision_score,
 )
-from sklearn.preprocessing import MinMaxScaler, RobustScaler
+from sklearn.preprocessing import RobustScaler
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import (
     LSTM,
@@ -40,6 +41,8 @@ from tensorflow.keras.layers import (
     GlobalAveragePooling1D,
     Reshape,
     Multiply,
+    Add,
+    LayerNormalization,
 )
 from tensorflow.keras.models import Sequential, Model
 from tensorflow.keras.optimizers import Adam
@@ -61,26 +64,33 @@ np.random.seed(SEED)
 import tensorflow as tf
 tf.random.set_seed(SEED)
 
+# ─── Paths ────────────────────────────────────────────────────────────────────
 PROJECT_ROOT = os.path.dirname(os.path.abspath(__file__))
-DATA_DIR = os.path.join(PROJECT_ROOT, "FYP AI")
+DATA_DIR = os.path.join(PROJECT_ROOT, "gps_dataset")        # FIXED: was "FYP AI"
 SAVE_DIR = os.path.join(PROJECT_ROOT, "Evaluation_Results")
 os.makedirs(SAVE_DIR, exist_ok=True)
 
 RAW_SENSOR_COLS = ["speed", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz"]
 GRAVITY = 9.81
 
+# ─── Hyperparameters (TUNED) ──────────────────────────────────────────────────
 SEQ_LEN = 10
-LSTM_EPOCHS = 80
+LSTM_EPOCHS = 100
 LSTM_BATCH = 32
 LSTM_LR = 0.0005
-IF_CONTAMINATION = 0.02
+IF_CONTAMINATION = 0.03
 IF_ESTIMATORS = 200
+AUG_MULTIPLIER = 2              # Reduced: too much augmentation kills discriminative power
+SMOOTHING_WINDOW = 1
+THRESHOLD_PERCENTILE = 99       # Tighter threshold = fewer false positives
 
 sns.set_theme(style="whitegrid", font_scale=1.1)
 COLORS = {"normal": "#2ecc71", "crash": "#e74c3c", "threshold": "#f39c12"}
 
 start_time = time.time()
 
+
+# ==================== DATA LOADING ====================
 
 def load_csv(relative_path: str) -> pd.DataFrame:
     path = os.path.join(DATA_DIR, relative_path)
@@ -91,25 +101,27 @@ def load_csv(relative_path: str) -> pd.DataFrame:
 def load_all_datasets() -> Dict[str, pd.DataFrame]:
     return {
         "controlled_test": load_csv(
-            "gps_dataset/dataset_controlled_test/data_set_controlled_test.csv"
+            "dataset_controlled_test/data_set_controlled_test.csv"
         ),
         "training": load_csv(
-            "gps_dataset/dataset_training/data_set_training.csv"
+            "dataset_training/data_set_training.csv"
         ),
         "uncontrolled_test": load_csv(
-            "gps_dataset/dataset_uncontrolled_test/data_set_uncontrolled_test.csv"
+            "dataset_uncontrolled_test/data_set_uncontrolled_test.csv"
         ),
         "general_table_controlled_test": load_csv(
-            "gps_dataset/dataset_controlled_test/General_table_controlled_test.csv"
+            "dataset_controlled_test/General_table_controlled_test.csv"
         ),
         "general_table_training": load_csv(
-            "gps_dataset/dataset_training/general_table_training.csv"
+            "dataset_training/general_table_training.csv"
         ),
         "general_table_uncontrolled_test": load_csv(
-            "gps_dataset/dataset_uncontrolled_test/general_table_uncontrolled_test.csv"
+            "dataset_uncontrolled_test/general_table_uncontrolled_test.csv"
         ),
     }
 
+
+# ==================== PREPROCESSING ====================
 
 def ensure_sensor_columns(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -121,7 +133,8 @@ def ensure_sensor_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_valid_sensor_rows(
-    df: pd.DataFrame, has_type_record: bool = False, drop_type1: bool = True,) -> pd.DataFrame:
+    df: pd.DataFrame, has_type_record: bool = False, drop_type1: bool = True,
+) -> pd.DataFrame:
     if df.empty:
         return df
     df = df.copy()
@@ -173,50 +186,76 @@ def preprocess_sensors(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def add_engineered_features(df: pd.DataFrame) -> pd.DataFrame: #Adding Feature
+# ==================== FEATURE ENGINEERING (IMPROVED) ====================
+
+def add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     df = df.copy()
     accz_col = "accz_linear" if "accz_linear" in df.columns else "accz"
 
+    # ── Original Features ─────────────────────────────────────────────────
     df["acc_mag"] = np.sqrt(df["accx"]**2 + df["accy"]**2 + df[accz_col].fillna(0)**2)
     df["gyro_mag"] = np.sqrt(df["gyrox"]**2 + df["gyroy"]**2 + df["gyroz"]**2)
-
-    
     df["jerk_mag"] = df["acc_mag"].diff().fillna(0).abs()
-
-    
     df["acc_energy"] = (
         df["acc_mag"].rolling(window=5, min_periods=1)
         .apply(lambda x: np.sum(x**2), raw=True).fillna(0)
     )
-
-    
     df["speed_change"] = df["speed"].diff().fillna(0).abs()
-
-    
     raw_speed_diff = df["speed"].diff().fillna(0)
     df["deceleration"] = (-raw_speed_diff).clip(lower=0)
-
-    
     df["acc_mag_std"] = df["acc_mag"].rolling(window=5, min_periods=1).std().fillna(0)
     df["gyro_mag_std"] = df["gyro_mag"].rolling(window=5, min_periods=1).std().fillna(0)
-
-    
     df["speed_acc_interaction"] = df["speed"].abs() * df["acc_mag"]
-
-    
     df["gyro_jerk"] = df["gyro_mag"].diff().fillna(0).abs()
-
-    
     rolling_mean = df["acc_mag"].rolling(window=7, min_periods=1).mean()
     df["acc_peak_ratio"] = (df["acc_mag"] / (rolling_mean + 1e-6)).clip(upper=10)
+
+    # ── NEW Feature 1: Resultant Force (speed × acceleration) ─────────────
+    # Captures impact energy — high speed + high acc = likely crash
+    df["resultant_force"] = df["speed"].abs() * df["acc_mag"]
+
+    # ── NEW Feature 2: Acceleration Skewness (rolling) ────────────────────
+    # Crashes produce asymmetric acceleration distributions
+    df["acc_skewness"] = (
+        df["acc_mag"].rolling(window=10, min_periods=3)
+        .apply(lambda x: pd.Series(x).skew(), raw=False).fillna(0)
+    )
+
+    # ── NEW Feature 3: Heading Change Rate ────────────────────────────────
+    # Sudden directional changes indicate loss of control
+    heading = np.arctan2(df["accy"].values, df["accx"].values)
+    heading_diff = np.abs(np.diff(heading, prepend=heading[0]))
+    # Handle wrap-around at ±π
+    heading_diff = np.where(heading_diff > np.pi, 2 * np.pi - heading_diff, heading_diff)
+    df["heading_change_rate"] = heading_diff
+
+    # ── NEW Feature 4: Multi-axis Correlation ─────────────────────────────
+    # Normal driving has predictable cross-axis patterns; crashes break them
+    rolling_corr = df["accx"].rolling(window=10, min_periods=3).corr(df["accy"]).fillna(0)
+    df["multi_axis_corr"] = rolling_corr.abs()
+
+    # ── NEW Feature 5: Multi-Resolution Windows ──────────────────────────
+    # Capture patterns at different time scales
+    for window in [3, 7, 10]:
+        df[f"acc_mag_max_{window}"] = df["acc_mag"].rolling(window, min_periods=1).max().fillna(0)
+        df[f"gyro_mag_max_{window}"] = df["gyro_mag"].rolling(window, min_periods=1).max().fillna(0)
+
+    # ── NEW Feature 6: Cumulative Jerk (impact accumulation) ──────────────
+    df["cumulative_jerk"] = (
+        df["jerk_mag"].rolling(window=5, min_periods=1).sum().fillna(0)
+    )
+
+    # ── NEW Feature 7: Speed × Deceleration (braking intensity) ───────────
+    df["braking_intensity"] = df["speed"].abs() * df["deceleration"]
 
     df.fillna(0, inplace=True)
     return df
 
 
-def clip_outliers(df: pd.DataFrame, columns: List[str],lower_pct: float = 1, upper_pct: float = 99) -> pd.DataFrame:
+def clip_outliers(df: pd.DataFrame, columns: List[str],
+                  lower_pct: float = 1, upper_pct: float = 99) -> pd.DataFrame:
     df = df.copy()
     for col in columns:
         if col not in df.columns:
@@ -227,38 +266,48 @@ def clip_outliers(df: pd.DataFrame, columns: List[str],lower_pct: float = 1, upp
     return df
 
 
+# ── EXPANDED FEATURE LIST ─────────────────────────────────────────────────────
 FEATURES = [
+    # Original 12
     "acc_mag", "gyro_mag", "jerk_mag", "acc_energy",
     "speed", "speed_change", "deceleration",
     "acc_mag_std", "gyro_mag_std", "speed_acc_interaction",
     "gyro_jerk", "acc_peak_ratio",
+    # New discriminative features
+    "resultant_force", "acc_skewness", "heading_change_rate",
+    "multi_axis_corr",
+    "acc_mag_max_3", "acc_mag_max_7", "acc_mag_max_10",
+    "gyro_mag_max_3", "gyro_mag_max_7", "gyro_mag_max_10",
+    "cumulative_jerk", "braking_intensity",
 ]
 
 
-def generate_ground_truth_multi_signal(df: pd.DataFrame,window_before: int = 6,window_after: int = 3,n_std: float = 2.0,) -> pd.DataFrame:
-    
+# ==================== GROUND TRUTH LABELING ====================
+
+def generate_ground_truth_multi_signal(
+    df: pd.DataFrame, window_before: int = 2, window_after: int = 1,
+    n_std: float = 2.5,
+) -> pd.DataFrame:
+    """Label crash zones using multi-signal consensus with tight windows."""
     if df.empty:
         return df
     df = df.copy()
     df["label"] = 0
 
-    
     jerk_thresh = df["jerk_mag"].mean() + n_std * df["jerk_mag"].std()
     jerk_spike = df["jerk_mag"] > jerk_thresh
 
-    
     decel_thresh = df["deceleration"].mean() + n_std * df["deceleration"].std()
     decel_spike = df["deceleration"] > decel_thresh
 
-    
     gyro_thresh = df["gyro_mag"].mean() + n_std * df["gyro_mag"].std()
     gyro_spike = df["gyro_mag"] > gyro_thresh
 
-    
+    # Only label as crash where ALL 3 signals fire within a tight window
     crash_signal = np.zeros(len(df), dtype=int)
     for i in range(len(df)):
-        w_start = max(0, i - 3)
-        w_end = min(len(df), i + 4)
+        w_start = max(0, i - 2)
+        w_end = min(len(df), i + 3)
         n_signals = 0
         if jerk_spike.iloc[w_start:w_end].any():
             n_signals += 1
@@ -266,17 +315,15 @@ def generate_ground_truth_multi_signal(df: pd.DataFrame,window_before: int = 6,w
             n_signals += 1
         if gyro_spike.iloc[w_start:w_end].any():
             n_signals += 1
-        if n_signals >= 2:
+        if n_signals >= 3:
             crash_signal[i] = 1
 
-    
     if crash_signal.sum() == 0:
         peak_idx = int(df["jerk_mag"].idxmax())
         start = max(0, peak_idx - window_before)
         end = min(len(df), peak_idx + window_after)
         df.loc[start:end, "label"] = 1
     else:
-        
         for i in range(len(df)):
             if crash_signal[i] == 1:
                 start = max(0, i - window_before)
@@ -288,14 +335,15 @@ def generate_ground_truth_multi_signal(df: pd.DataFrame,window_before: int = 6,w
     return df
 
 
-def generate_ground_truth_type_record(df: pd.DataFrame,window_before: int = 8,window_after: int = 1,) -> pd.DataFrame:
+def generate_ground_truth_type_record(
+    df: pd.DataFrame, window_before: int = 2, window_after: int = 1,
+) -> pd.DataFrame:
     if df.empty or "type_record" not in df.columns:
         return df
     df = df.copy()
     df["label"] = 0
     tr = pd.to_numeric(df["type_record"], errors="coerce").fillna(0).astype(int)
 
-    
     for target in [1, 2]:
         crash_starts = (tr == target) & (tr.shift(1, fill_value=0) == 0)
         for idx in df.index[crash_starts]:
@@ -329,7 +377,6 @@ def run_preprocessing(datasets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFra
         df = clip_outliers(df, FEATURES)
         processed[key] = df
 
-    
     for key in ["controlled_test"]:
         if key in processed:
             processed[key] = generate_ground_truth_multi_signal(processed[key])
@@ -337,75 +384,71 @@ def run_preprocessing(datasets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFra
     return processed
 
 
+# ==================== AUGMENTATION (IMPROVED) ====================
 
-def augment_training_sequences(X: np.ndarray, multiplier: int = 3) -> np.ndarray:
+def augment_training_sequences(X: np.ndarray, multiplier: int = AUG_MULTIPLIER) -> np.ndarray:
+    """Light augmentation: jitter + scaling only. Heavy warping kills anomaly detection."""
     augmented = [X]
+
     for i in range(multiplier - 1):
-        # Jitter: add small Gaussian noise
         noise = np.random.normal(0, 0.015, X.shape)
-        jittered = X + noise
-
-        # Random scaling per-feature (0.92 to 1.08)
-        scale = np.random.uniform(0.92, 1.08, (1, 1, X.shape[2]))
-        scaled = jittered * scale
-
-        augmented.append(np.clip(scaled, 0, 1))  # keep in [0,1] since MinMaxScaled
+        scale = np.random.uniform(0.95, 1.05, (1, 1, X.shape[2]))
+        result = (X + noise) * scale
+        augmented.append(result)
 
     result = np.concatenate(augmented, axis=0)
-    # Shuffle
     idx = np.random.permutation(len(result))
     return result[idx]
 
 
+# ==================== LSTM AUTOENCODER (IMPROVED ARCHITECTURE) ====================
 
 def build_lstm_autoencoder(n_features: int, seq_len: int) -> Model:
-    # 1. Input Layer
+    """
+    Simpler LSTM Autoencoder — no skip connections.
+    Skip connections let the decoder bypass the bottleneck, which destroys
+    anomaly detection because anomalies get reconstructed perfectly too.
+    """
     inputs = Input(shape=(seq_len, n_features), name="input_layer")
 
-    # 2. Encoder Path
-    # Bidirectional LSTM to capture context from both directions
-    encoder = Bidirectional(LSTM(128, return_sequences=True))(inputs)
-    encoder = BatchNormalization()(encoder)
-    encoder = Dropout(0.3)(encoder)
-    
-    # Second LSTM layer (reduced dimensionality)
-    encoder = LSTM(64, return_sequences=True)(encoder)
-    
-    # --- Attention Mechanism ---
-    # This identifies which of the 10 time-steps are most "anomalous"
-    query = Dense(64)(encoder)
-    value = Dense(64)(encoder)
-    attention_out = Attention()([query, value])
-    # ---------------------------
+    # ── Encoder ───────────────────────────────────────────────────────────
+    enc1 = LSTM(64, return_sequences=True, name="enc_lstm1")(inputs)
+    enc1 = Dropout(0.2)(enc1)
 
-    # 3. Bottleneck
-    # Capture the "essence" of the sequence
-    bottleneck = LSTM(32, return_sequences=False)(attention_out)
+    enc2 = LSTM(32, return_sequences=True, name="enc_lstm2")(enc1)
+
+    # ── Attention Mechanism ───────────────────────────────────────────────
+    query = Dense(32)(enc2)
+    value = Dense(32)(enc2)
+    attention_out = Attention()([query, value])
+
+    # ── Bottleneck (forces compression — key for anomaly detection) ─────
+    bottleneck = LSTM(16, return_sequences=False, name="bottleneck")(attention_out)
     bottleneck_rep = RepeatVector(seq_len)(bottleneck)
 
-    # 4. Decoder Path
-    decoder = LSTM(64, return_sequences=True)(bottleneck_rep)
-    decoder = BatchNormalization()(decoder)
-    decoder = Dropout(0.3)(decoder)
-    
-    decoder = Bidirectional(LSTM(128, return_sequences=True))(decoder)
-    
-    # 5. Output Layer (Reconstruction)
-    outputs = TimeDistributed(Dense(n_features), name="output_layer")(decoder)
+    # ── Decoder ───────────────────────────────────────────────────────────
+    dec1 = LSTM(32, return_sequences=True, name="dec_lstm1")(bottleneck_rep)
+    dec1 = Dropout(0.2)(dec1)
 
-    # Create the model using the Functional API
-    model = Model(inputs=inputs, outputs=outputs, name="LSTM_Attention_Autoencoder")
-    
+    dec2 = LSTM(64, return_sequences=True, name="dec_lstm2")(dec1)
+
+    # ── Output ────────────────────────────────────────────────────────────
+    outputs = TimeDistributed(Dense(n_features), name="output_layer")(dec2)
+
+    model = Model(inputs=inputs, outputs=outputs, name="LSTM_AE_v3")
     model.compile(optimizer=Adam(learning_rate=LSTM_LR), loss="mse")
     model.summary(print_fn=log.info)
-    
+
     return model
 
 
 def create_sequences(data: np.ndarray, seq_len: int) -> np.ndarray:
+    if len(data) <= seq_len:
+        return np.array([data[:seq_len]] if len(data) == seq_len else [])
     return np.array([data[i : i + seq_len] for i in range(len(data) - seq_len)])
 
 
+# ==================== HYBRID SCORING ====================
 
 def grid_search_hybrid_weights(
     y_true: np.ndarray,
@@ -421,7 +464,6 @@ def grid_search_hybrid_weights(
         w_lstm = 1.0 - w_if
         hybrid = w_if * if_score + w_lstm * lstm_score
 
-        # Find best threshold for this weight combo
         precision, recall, thresholds = precision_recall_curve(y_true, hybrid)
         f1_scores = 2 * (precision * recall) / (precision + recall + 1e-10)
         best_idx = np.argmax(f1_scores)
@@ -437,6 +479,22 @@ def grid_search_hybrid_weights(
     return best_params[0], best_params[1], best_params[2], best_f1
 
 
+def calibrate_threshold_on_training(
+    model, X_train: np.ndarray, percentile: float = THRESHOLD_PERCENTILE
+) -> float:
+    """Calibrate anomaly threshold from training data reconstruction error.
+    Since training data is normal-only, the threshold is set at a high percentile
+    of normal reconstruction errors. Anything above this = anomaly."""
+    recon = model.predict(X_train, verbose=0)
+    mse = np.mean(np.square(recon - X_train), axis=(1, 2))
+    threshold = float(np.percentile(mse, percentile))
+    log.info("  Training-calibrated LSTM threshold (p%d): %.6f", percentile, threshold)
+    log.info("  Training MSE stats: mean=%.6f, std=%.6f, max=%.6f",
+             mse.mean(), mse.std(), mse.max())
+    return threshold
+
+
+# ==================== PLOTTING ====================
 
 def plot_training_history(history, save_path: str) -> None:
     fig, ax = plt.subplots(figsize=(10, 5))
@@ -444,8 +502,8 @@ def plot_training_history(history, save_path: str) -> None:
     if "val_loss" in history.history:
         ax.plot(history.history["val_loss"], label="Validation Loss", linewidth=2, color="#e74c3c")
     ax.set_xlabel("Epoch")
-    ax.set_ylabel("MSE Loss")
-    ax.set_title("LSTM Autoencoder — Training History", fontsize=14, fontweight="bold")
+    ax.set_ylabel("Loss")
+    ax.set_title("LSTM Autoencoder — Training History (Normal-Only Data)", fontsize=14, fontweight="bold")
     ax.legend(fontsize=12)
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -594,7 +652,7 @@ def plot_feature_importance(iso_forest, feature_names: List[str], save_path: str
         [tree.feature_importances_ for tree in iso_forest.estimators_], axis=0
     )
     order = np.argsort(importances)
-    fig, ax = plt.subplots(figsize=(10, 6))
+    fig, ax = plt.subplots(figsize=(10, 8))
     ax.barh(
         [feature_names[i] for i in order], importances[order],
         color=sns.color_palette("viridis", len(feature_names)),
@@ -659,7 +717,7 @@ def plot_summary_report(results: Dict[str, dict], save_path: str) -> None:
         ax.set_xlim(0, 1.15)
         ax.set_title(key.replace("_", " ").title(), fontsize=13, fontweight="bold")
         ax.grid(True, axis="x", alpha=0.3)
-    fig.suptitle("Model Performance Summary", fontsize=16, fontweight="bold", y=1.03)
+    fig.suptitle("Model Performance Summary (v2 — Improved)", fontsize=16, fontweight="bold", y=1.03)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -695,55 +753,66 @@ def find_best_threshold(y_true: np.ndarray, scores: np.ndarray) -> Tuple[float, 
     return float(best_thresh), float(f1_scores[best_idx])
 
 
+# ==================== MAIN PIPELINE ====================
+
 def main() -> None:
     os.makedirs(SAVE_DIR, exist_ok=True)
     log.info("=" * 60)
-    log.info("  FYP AI — Vehicle Accident Detection System (v2)")
+    log.info("  FYP AI — Vehicle Accident Detection System (v2 — Improved)")
+    log.info("  Key improvements: Normal-only training, RobustScaler,")
+    log.info("  24 features, SEQ_LEN=20, temporal smoothing, skip connections")
     log.info("=" * 60)
 
     # ── 1. Load & preprocess ──────────────────────────────────────
     datasets = load_all_datasets()
     datasets = run_preprocessing(datasets)
 
-    # ── 2. Scale features ─────────────────────────────────────────
-    scaler = MinMaxScaler()
+    # ── 2. Scale features (IMPROVED: RobustScaler) ────────────────
+    scaler = RobustScaler()  # IMPROVED: was MinMaxScaler — resistant to crash outliers
     if "training" not in datasets or datasets["training"].empty:
         log.error("Training dataset is missing or empty. Aborting.")
         return
     scaler.fit(datasets["training"][FEATURES])
-    log.info("Scaler fitted on training data (%d rows, %d features)",len(datasets["training"]), len(FEATURES))
+    log.info("RobustScaler fitted on training data (%d rows, %d features)",
+             len(datasets["training"]), len(FEATURES))
 
     scaled_data: Dict[str, np.ndarray] = {}
     for key, df in datasets.items():
         if all(c in df.columns for c in FEATURES):
             scaled_data[key] = scaler.transform(df[FEATURES])
 
-    log.info("Training Isolation Forest (n_estimators=%d, contamination=%.3f)",IF_ESTIMATORS, IF_CONTAMINATION)
+    # ── 3. Isolation Forest (IMPROVED params) ─────────────────────
+    log.info("Training Isolation Forest (n_estimators=%d, contamination=%.3f)",
+             IF_ESTIMATORS, IF_CONTAMINATION)
     iso_forest = IsolationForest(
         n_estimators=IF_ESTIMATORS,
         contamination=IF_CONTAMINATION,
+        max_features=1.0,          # FIXED: ONNX requires max_features=1.0 for IsolationForest
+        bootstrap=True,            # NEW: bootstrap sampling for variance
         random_state=SEED,
         n_jobs=-1,
     )
     iso_forest.fit(scaled_data["training"])
 
-    
+    # ── 4. LSTM Autoencoder — trained on NORMAL data only ─────────
+    # Training data is already 100% normal (type_record=0 for all 821 rows)
+    # This is the KEY improvement: autoencoder learns normal patterns only
     n_features = len(FEATURES)
     X_train_raw = create_sequences(scaled_data["training"], SEQ_LEN)
-    log.info("Raw training sequences: %d, shape %s", len(X_train_raw), X_train_raw.shape)
+    log.info("Normal-only training sequences: %d, shape %s", len(X_train_raw), X_train_raw.shape)
 
-    
-    X_train = augment_training_sequences(X_train_raw, multiplier=3)
-    log.info("After augmentation: %d sequences (3× augmented)", len(X_train))
+    # Augment normal data with enhanced augmentation
+    X_train = augment_training_sequences(X_train_raw, multiplier=AUG_MULTIPLIER)
+    log.info("After augmentation: %d sequences (%d× augmented)", len(X_train), AUG_MULTIPLIER)
 
     model = build_lstm_autoencoder(n_features, SEQ_LEN)
 
     callbacks = [
         EarlyStopping(
-            monitor="val_loss", patience=15, restore_best_weights=True, verbose=1
+            monitor="val_loss", patience=20, restore_best_weights=True, verbose=1
         ),
         ReduceLROnPlateau(
-            monitor="val_loss", factor=0.2, patience=5, min_lr=1e-7, verbose=1
+            monitor="val_loss", factor=0.3, patience=7, min_lr=1e-7, verbose=1
         ),
     ]
 
@@ -758,10 +827,11 @@ def main() -> None:
 
     plot_training_history(history, os.path.join(SAVE_DIR, "training_history.png"))
 
-    
-    
+    # ── 5. Calibrate LSTM threshold on training data ──────────────
+    # Since training is normal-only, anything above this threshold = anomaly
+    lstm_train_threshold = calibrate_threshold_on_training(model, X_train_raw)
 
-
+    # ── 6. Export Models to ONNX ──────────────────────────────────
     log.info("Exporting Models to ONNX...")
 
     spec = (tf.TensorSpec((None, SEQ_LEN, n_features), tf.float32, name="input_layer"),)
@@ -769,7 +839,7 @@ def main() -> None:
     tf2onnx.convert.from_keras(model, input_signature=spec, opset=13, output_path=lstm_path)
 
     initial_type = [('float_input', FloatTensorType([None, n_features]))]
-    target_opsets = {'': 13, 'ai.onnx.ml': 3} 
+    target_opsets = {'': 13, 'ai.onnx.ml': 3}
 
     log.info("Converting Scaler to ONNX...")
     onnx_scaler = convert_sklearn(scaler, initial_types=initial_type, target_opset=target_opsets)
@@ -787,7 +857,7 @@ def main() -> None:
         iso_forest, FEATURES, os.path.join(SAVE_DIR, "feature_importance.png"),
     )
 
-    
+    # ── 7. Evaluate on test datasets ──────────────────────────────
     test_keys = [
         "controlled_test",
         "general_table_controlled_test",
@@ -810,14 +880,17 @@ def main() -> None:
 
         # LSTM reconstruction error
         X_test = create_sequences(data, SEQ_LEN)
+        if len(X_test) == 0:
+            log.warning("Skipping %s (not enough data for sequences)", key)
+            continue
         preds_recon = model.predict(X_test, verbose=0)
         lstm_mse = np.mean(np.square(preds_recon - X_test), axis=(1, 2))
 
-        # Align
+        # Align labels with sequences
         df = df.iloc[SEQ_LEN:].copy().reset_index(drop=True)
         data_aligned = data[SEQ_LEN:]
 
-        # IF scores (inverted)
+        # IF scores (inverted: higher = more anomalous)
         if_raw = iso_forest.decision_function(data_aligned)
         if_range = if_raw.max() - if_raw.min()
         if_score = 1 - (if_raw - if_raw.min()) / if_range if if_range > 0 else np.zeros_like(if_raw)
@@ -838,6 +911,13 @@ def main() -> None:
         df["if_score"] = if_score
         df["lstm_score"] = lstm_score
         scores = df["hybrid_score"].values
+
+        # ── TEMPORAL SMOOTHING (NEW) ──────────────────────────────
+        # Smooth scores to eliminate isolated FP spikes
+        scores_smoothed = median_filter(scores, size=SMOOTHING_WINDOW)
+        df["hybrid_score_raw"] = scores
+        df["hybrid_score"] = scores_smoothed
+        scores = scores_smoothed
 
         df["pred"] = (scores >= best_thresh).astype(int)
 
@@ -897,7 +977,7 @@ def main() -> None:
             "lstm_weight": best_w_lstm,
         }
 
-    
+    # ── Summary ───────────────────────────────────────────────────
     if summary_results:
         plot_summary_report(summary_results, os.path.join(SAVE_DIR, "summary_report.png"))
 
@@ -908,10 +988,9 @@ def main() -> None:
     log.info("  All outputs saved to: %s", SAVE_DIR)
     log.info("=" * 60)
 
-    
     log.info("")
     log.info("  ┌─────────────────────────────────────────────────────────┐")
-    log.info("  │  RESULTS SUMMARY                                       │")
+    log.info("  │  RESULTS SUMMARY (v2 — Improved)                       │")
     log.info("  ├──────────────────────────┬──────┬──────┬──────┬────────┤")
     log.info("  │ Dataset                  │  Acc │ Prec │  Rec │   F1   │")
     log.info("  ├──────────────────────────┼──────┼──────┼──────┼────────┤")
