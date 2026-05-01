@@ -1,0 +1,45 @@
+name: guardian_sense_1
+description: "A new Flutter project."
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.8.1
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # ONNX Runtime for AI Inference
+  onnxruntime: ^1.4.1
+  typed_data: ^1.3.2
+
+  # Backend & Communication
+  supabase_flutter: ^2.8.0
+  url_launcher: ^6.3.0
+
+  # Icons & UI
+  cupertino_icons: ^1.0.8
+
+  # Sensors & Core Functionality
+  sensors_plus: ^6.1.1    # For Accelerometer & Gyroscope
+  geolocator: ^13.0.1      # For GPS & Speed
+  permission_handler: ^11.3.1 # For system permissions
+
+  # Audio
+  audioplayers: ^6.1.0       # For alarm sound on accident detection
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^5.0.0
+
+flutter:
+  uses-material-design: true
+
+  # Assets must be declared here under the flutter section
+  assets:
+    - lib/assets/models/scaler.onnx
+    - lib/assets/models/isolation_forest.onnx
+    - lib/assets/models/lstm_autoencoder.onnx
+    - lib/assets/audio/alarm.wav
