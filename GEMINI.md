@@ -1,632 +1,460 @@
-# 🏥 Hospital Backend + Frontend Integration — Agent Task Instructions
+# Hospital Backend Integration — Agent Instructions
 
-> **Agent:** You are responsible for two things:
-> 1. **Complete the Hospital backend** from scratch following the structure below
-> 2. **Find and fix every frontend error** that surfaces when connecting to the Hospital backend
->
-> **Scope is strictly limited to Hospital.** Do not touch Police, Admin, or any unrelated modules.
-> Read every section carefully before writing a single line of code.
+> **Scope: Hospital module ONLY.** Do not touch Police, Admin, Auth, or any unrelated module.
 
 ---
 
-## 🔴 Critical Rules (Non-Negotiable)
+## ⚠️ CRITICAL: Schema Verification — Do This First
 
-| Rule | Detail |
-|------|--------|
-| ✅ **DO** | Build and complete all Hospital-related backend endpoints |
-| ✅ **DO** | Actively find and fix ALL frontend errors related to Hospital — components, API calls, routing, state |
-| ✅ **DO** | Link Hospital backend to the already-completed frontend, end-to-end |
-| ✅ **DO** | Follow the exact backend file structure defined below |
-| ✅ **DO** | Read all configuration values (URLs, ports, secrets) from environment variables |
-| ❌ **DO NOT** | Touch `Police_Stations`, `Admins`, or any police/admin routes or frontend pages |
-| ❌ **DO NOT** | Fix frontend bugs unrelated to Hospital or the backend connection |
-| ❌ **DO NOT** | Modify any table schema |
-| ❌ **DO NOT** | Create backend files outside the Hospital module folder |
-| ❌ **DO NOT** | Leave any endpoint incomplete, untested, or throwing unhandled errors |
-| ❌ **DO NOT** | Hardcode any URL, port, credential, or environment-specific value |
-
----
-
-## ⚙️ Environment Variables
-
-All configuration **must** come from environment variables. Create a `.env` file at the project root (never commit it) and reference every value through `process.env`.
-
-### Required `.env` Keys
-
-```env
-# ── Server ────────────────────────────────────────────────
-PORT=                        # e.g. 5000
-NODE_ENV=                    # development | production
-
-# ── Database (Supabase / PostgreSQL) ──────────────────────
-DB_HOST=
-DB_PORT=
-DB_NAME=
-DB_USER=
-DB_PASSWORD=
-DATABASE_URL=                # Full connection string (alternative to individual keys)
-
-# ── Auth ──────────────────────────────────────────────────
-JWT_SECRET=
-JWT_EXPIRES_IN=              # e.g. 7d
-
-# ── CORS ──────────────────────────────────────────────────
-FRONTEND_URL=                # e.g. http://localhost:5173
-```
-
-> ⚠️ **If any required variable is missing at startup, the server must log a clear error and exit.**
-
-### Startup Validation (add to `src/config/env.js`)
-
-```js
-// src/config/env.js
-const REQUIRED_VARS = [
-  'PORT',
-  'DATABASE_URL',   // or DB_HOST, DB_PORT, DB_NAME, DB_USER, DB_PASSWORD
-  'JWT_SECRET',
-  'FRONTEND_URL',
-];
-
-const missing = REQUIRED_VARS.filter((key) => !process.env[key]);
-
-if (missing.length > 0) {
-  console.error(`[Config] Missing required environment variables: ${missing.join(', ')}`);
-  process.exit(1);
-}
-
-module.exports = {
-  port:        process.env.PORT,
-  nodeEnv:     process.env.NODE_ENV || 'development',
-  databaseUrl: process.env.DATABASE_URL,
-  jwtSecret:   process.env.JWT_SECRET,
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
-  frontendUrl: process.env.FRONTEND_URL,
-};
-```
-
-Import `src/config/env.js` at the very top of `server.js` so validation runs before anything else.
-
----
-
-## 🗄️ Relevant Database Tables
-
-You will work **only** with these tables. Column names come from Supabase — verify them in Phase 0 before writing any code.
-
-### `hospitals`
-```sql
-CREATE TABLE hospitals (
-    hospital_id   SERIAL PRIMARY KEY,
-    hospital_name VARCHAR(150) NOT NULL,
-    address       TEXT NOT NULL,
-    city          VARCHAR(100) NOT NULL,
-    phone         VARCHAR(20) NOT NULL,
-    email         VARCHAR(100) NOT NULL,
-    bed_capacity  INT NOT NULL,
-    is_active     BOOLEAN DEFAULT TRUE,
-    password_hash VARCHAR(255) NOT NULL DEFAULT 'temp_password'
-);
-```
-
-### `incidents` (READ ONLY — do not modify schema)
-```sql
-CREATE TABLE incidents (
-    incident_id  SERIAL PRIMARY KEY,
-    user_id      INT NOT NULL,
-    latitude     DECIMAL(10, 8) NOT NULL,
-    longitude    DECIMAL(11, 8) NOT NULL,
-    is_active    BOOLEAN DEFAULT TRUE,
-    detected_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    resolved_at  TIMESTAMP NULL,
-    FOREIGN KEY (user_id) REFERENCES users(user_id)
-);
-```
-
-### `incident_dispatch` (Hospital rows only)
-```sql
--- Handle only rows where responder_type = 'Hospital'
--- hospital_id must NOT be NULL; station_id must be NULL
-CREATE TABLE incident_dispatch (
-    dispatch_id     SERIAL PRIMARY KEY,
-    incident_id     INT NOT NULL,
-    responder_type  VARCHAR(20) NOT NULL CHECK (responder_type IN ('Hospital', 'Police')),
-    hospital_id     INT NULL,
-    station_id      INT NULL,
-    dispatch_status VARCHAR(20) DEFAULT 'Pending' CHECK (dispatch_status IN ('Pending', 'En Route', 'Resolved')),
-    dispatched_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (incident_id) REFERENCES incidents(incident_id) ON DELETE CASCADE,
-    FOREIGN KEY (hospital_id) REFERENCES hospitals(hospital_id),
-    FOREIGN KEY (station_id)  REFERENCES police_stations(station_id)
-);
-```
-
-> ⚠️ When inserting into `incident_dispatch`, always set:
-> - `responder_type = 'Hospital'`
-> - `hospital_id = <valid id>`
-> - `station_id = NULL`
-
----
-
-## 📁 Required Backend File Structure
-
-```
-src/
-├── config/
-│   └── env.js                    ← Environment variable validation + export
-└── modules/
-    └── hospital/
-        ├── hospital.routes.js    ← Route definitions only
-        ├── hospital.controller.js← Request/response handling only
-        ├── hospital.service.js   ← Business logic only
-        ├── hospital.repository.js← All raw SQL / DB queries
-        ├── hospital.validator.js ← Input validation (Joi / Zod / express-validator)
-        └── hospital.test.js      ← Unit + integration tests
-```
-
-| File | Responsibility |
-|------|---------------|
-| `env.js` | Validates env vars at startup; exports typed config object |
-| `routes.js` | Maps HTTP methods + paths to controller functions |
-| `controller.js` | Parses req/res, calls service, sends response |
-| `service.js` | Business rules, dispatch logic, orchestration |
-| `repository.js` | All DB queries in one place — easy to debug SQL |
-| `validator.js` | Validates all incoming data before it hits the DB |
-| `test.js` | Catches regressions, verifies every endpoint |
-
-> 🔍 **Debug order when something breaks:** `repository.js` (DB) → `service.js` (logic) → `controller.js` (request parsing)
-
----
-
-## 📋 Required API Endpoints
-
-Implement **all** of the following. No stubs allowed.
-
-### Hospital Management
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `GET` | `/api/hospitals` | Get all active hospitals |
-| `GET` | `/api/hospitals/:id` | Get a single hospital by ID |
-| `POST` | `/api/hospitals` | Register a new hospital |
-| `PUT` | `/api/hospitals/:id` | Update hospital info |
-| `PATCH` | `/api/hospitals/:id/status` | Toggle `is_active` (activate/deactivate) |
-| `DELETE` | `/api/hospitals/:id` | Soft delete — set `is_active = false` |
-
-### Incident Dispatch (Hospital Only)
-
-| Method | Route | Description |
-|--------|-------|-------------|
-| `POST` | `/api/hospitals/dispatch` | Dispatch a hospital to an incident |
-| `GET` | `/api/hospitals/dispatch/:incident_id` | Get hospital dispatch info for an incident |
-| `PATCH` | `/api/hospitals/dispatch/:dispatch_id/status` | Update dispatch status |
-| `GET` | `/api/hospitals/:hospital_id/dispatches` | Get all dispatches for a hospital |
-
-> ⚠️ Status is one-way only: `Pending` → `En Route` → `Resolved`. Backwards transitions must be rejected.
-
----
-
-## ✅ Dispatch Business Logic
-
-**On creating a dispatch** (`POST /api/hospitals/dispatch`):
-1. Verify `incident_id` exists and `is_active = true`
-2. Verify `hospital_id` exists and `is_active = true`
-3. Check no existing `Hospital` dispatch exists for this incident — reject duplicates with `409`
-4. Insert: `responder_type = 'Hospital'`, `station_id = NULL`, `dispatch_status = 'Pending'`
-
-**On updating dispatch status** (`PATCH .../status`):
-- Only allow `Pending → En Route` and `En Route → Resolved`
-- On `Resolved`: set `incidents.resolved_at = NOW()` and `incidents.is_active = false`
-- Any other transition → reject with `422 Unprocessable Entity` and a clear error message
-
----
-
-## 🛡️ Validation Requirements (`hospital.validator.js`)
-
-### POST `/api/hospitals`
-```
-hospital_name  → required, string, max 150 chars
-address        → required, string
-city           → required, string, max 100 chars
-phone          → required, string, max 20 chars
-email          → required, valid email format
-bed_capacity   → required, integer, min 1
-```
-
-### POST `/api/hospitals/dispatch`
-```
-incident_id    → required, positive integer
-hospital_id    → required, positive integer
-```
-
-### PATCH `.../status`
-```
-dispatch_status → required, one of: 'Pending' | 'En Route' | 'Resolved'
-```
-
-> Return `400 Bad Request` with a descriptive message on any validation failure.
-
----
-
-## ⚙️ Response & Error Standards
-
-```js
-// All success responses
-{ "success": true,  "message": "...", "data": { ... } }
-
-// All error responses
-{ "success": false, "message": "Human-readable reason", "error": "Technical detail (dev only)" }
-```
-
-| Scenario | HTTP Status |
-|----------|-------------|
-| Hospital not found | `404` |
-| Incident not found or inactive | `404` |
-| Duplicate dispatch | `409 Conflict` |
-| Validation failure | `400 Bad Request` |
-| Invalid status transition | `422 Unprocessable Entity` |
-| Server / DB error | `500 Internal Server Error` |
-
-No endpoint may throw an unhandled promise rejection. All async functions must be wrapped in try/catch.
-
----
-
-## 🖥️ Frontend Integration + Bug Fixing
-
-The frontend is **already built**. Your job is to connect it to the backend and **fix every error or broken interaction that appears** — whether the fix lives in the backend or the frontend. Both are your responsibility within the Hospital scope.
-
-You may edit frontend files **only** if:
-- The file makes API calls to a Hospital endpoint, **or**
-- The bug is directly caused by the backend connection (wrong URL, response mismatch, missing headers, etc.), **or**
-- The file is a shared utility (`api.js`, `axiosConfig.js`, `httpClient.js`) and your fix does not break any non-Hospital flow
-
-### Frontend Environment Variables
-
-The frontend must also read all configuration from environment variables — never hardcode URLs or tokens.
-
-```env
-# Frontend .env (e.g. Vite)
-VITE_API_BASE_URL=           # e.g. http://localhost:5000/api
-VITE_AUTH_TOKEN_KEY=         # localStorage key used to store the JWT
-```
-
-All API calls must use `import.meta.env.VITE_API_BASE_URL` (or equivalent for your bundler) instead of a literal URL string.
-
----
-
-### Phase 0 — Frontend Field Audit + Supabase Schema Verification ⚠️ DO THIS FIRST
-
-> **This phase is mandatory and must be completed before writing a single line of backend code.**
-
-#### Step 1 — Extract Every Field Used in the Frontend
-
-Open **every** Hospital-related frontend file and build a complete field inventory:
-
-| What to extract | Where to look |
-|---|---|
-| Every field sent in a request body | Forms, `POST`/`PUT`/`PATCH` API calls, state objects |
-| Every field read from a response | Table renders, detail views, conditional logic, destructuring |
-| Every URL param or query param | Route definitions, `useParams()`, dynamic URL builders |
-| Field names and exact casing | camelCase? snake_case? Note exactly as written |
-| Data types expected | string, number, boolean, array, nested object |
-
-Produce a consolidated inventory like this:
-
-```
-FRONTEND FIELD INVENTORY
-========================
-Forms / Request Bodies:
-  - hospital_name     (string)
-  - address           (string)
-  - city              (string)
-  - phone             (string)
-  - email             (string)
-  - bed_capacity      (number)
-  - [any other fields the frontend sends]
-
-Response Fields Read:
-  - hospital_id       (number)
-  - hospital_name     (string)
-  - is_active         (boolean)
-  - [any other fields the frontend reads]
-
-Dispatch Fields:
-  - incident_id       (number)
-  - hospital_id       (number)
-  - dispatch_status   (string)
-  - [any other dispatch fields]
-```
-
----
-
-#### Step 2 — Cross-Check Every Field Against Supabase
-
-Query `information_schema.columns` for each relevant table and verify every frontend field exists with the correct name and type:
+Before writing any code, verify the actual Supabase schema matches what is documented below.
+Run this query and confirm every column exists with the correct name and type:
 
 ```sql
-SELECT column_name, data_type
+SELECT table_name, column_name, data_type
 FROM information_schema.columns
 WHERE table_name IN ('hospitals', 'incidents', 'incident_dispatch')
 ORDER BY table_name, ordinal_position;
 ```
 
-For every frontend field, complete this table:
+### Confirmed Schema (verified against Supabase)
 
-| Frontend Field | Expected Table | Column Exists? | Type Match? |
-|---|---|---|---|
-| `hospital_name` | `hospitals` | ✅ / ❌ | ✅ / ❌ |
-| `bed_capacity` | `hospitals` | ✅ / ❌ | ✅ / ❌ |
-| `dispatch_status` | `incident_dispatch` | ✅ / ❌ | ✅ / ❌ |
-| *(every other field)* | ... | ... | ... |
-
----
-
-#### Step 3 — Report Gaps — STOP AND ASK
-
-If **any** frontend field is missing from the Supabase schema, or there is a name/type mismatch:
-
-> **⛔ STOP. Do not proceed with backend implementation.**
-
-Report the gap and wait for confirmation:
-
-```
-⚠️  SCHEMA GAP FOUND — ACTION REQUIRED BEFORE PROCEEDING
-
-The following fields are used by the Hospital frontend but are MISSING
-from the current Supabase database schema:
-
-  Table: hospitals
-  Missing columns:
-    - [field_name]  (expected type: [type])
-
-  Table: incident_dispatch
-  Missing columns:
-    - [field_name]  (expected type: [type])
-
-Please add these columns to Supabase before I continue.
-Once you confirm, I will proceed with backend implementation.
-```
-
-Do not work around missing columns. Do not rename fields to cover a schema gap. Ask now, wait for confirmation, then proceed.
-
----
-
-#### Step 4 — Document the Verified Field Contract
-
-Once all fields are confirmed, write the contract that the backend will be built against:
-
-```
-VERIFIED FIELD CONTRACT
-=======================
-hospitals table       ↔  frontend field   ↔  validator rule
-------------------------------------------------------------
-hospital_id           ↔  hospital_id      ↔  positive integer (response only)
-hospital_name         ↔  hospital_name    ↔  required, string, max 150
-address               ↔  address          ↔  required, string
-city                  ↔  city             ↔  required, string, max 100
-phone                 ↔  phone            ↔  required, string, max 20
-email                 ↔  email            ↔  required, valid email
-bed_capacity          ↔  bed_capacity     ↔  required, integer, min 1
-is_active             ↔  is_active        ↔  boolean (response only)
-
-incident_dispatch table ↔ frontend field  ↔  validator rule
-------------------------------------------------------------
-dispatch_id           ↔  dispatch_id      ↔  positive integer (response only)
-incident_id           ↔  incident_id      ↔  required, positive integer
-hospital_id           ↔  hospital_id      ↔  required, positive integer
-dispatch_status       ↔  dispatch_status  ↔  'Pending' | 'En Route' | 'Resolved'
-dispatched_at         ↔  dispatched_at    ↔  timestamp (response only)
-```
-
-> This document is your single source of truth. Every validator, every repository query, and every response shape must match it exactly.
-
----
-
-### Phase 1 — Audit the Frontend BEFORE Writing Any Backend Code
-
-> ✅ Begin Phase 1 only after Phase 0 is fully complete and all schema gaps are resolved.
-
-Open every Hospital-related frontend file and document:
-
-| What to find | Why |
+**`hospitals`**
+| Column | Type |
 |---|---|
-| Exact URL of every API call | Your backend route must match it character-for-character |
-| HTTP method used | Must match (`GET`, `POST`, `PATCH`, etc.) |
-| Exact request body shape and field names | Must match your validator's expectations |
-| Exact response fields the frontend reads | Your backend must return those exact field names |
-| Base URL source (env var or hardcoded) | Must be read from `process.env` / `import.meta.env` — never hardcoded |
-| Whether an auth token is attached | If yes, backend must accept and validate it |
+| hospital_id | integer (PK) |
+| hospital_name | varchar |
+| address | text |
+| city | varchar |
+| phone | varchar |
+| email | varchar |
+| bed_capacity | integer |
+| is_active | boolean |
+| password_hash | varchar |
 
-> 🔍 Build the backend to match what the frontend already expects — not the other way around.
+**`incidents`** (READ ONLY)
+| Column | Type |
+|---|---|
+| incident_id | integer (PK) |
+| user_id | uuid |
+| latitude | double precision |
+| longitude | double precision |
+| is_active | boolean |
+| detected_at | timestamptz |
 
----
+> ⚠️ `incidents` has NO `resolved_at` column. Do NOT reference it anywhere.
+> To resolve: set `is_active = false` only.
 
-### Phase 2 — Frontend Bug Categories to Find and Fix
+**`incident_dispatch`**
+| Column | Type |
+|---|---|
+| dispatch_id | integer (PK) |
+| incident_id | integer (FK) |
+| responder_type | varchar — `'Hospital'` or `'Police'` |
+| hospital_id | integer (nullable) |
+| station_id | integer (nullable) |
+| dispatch_status | varchar — `'Pending'`, `'En Route'`, `'Resolved'` |
+| dispatched_at | timestamptz |
 
-Work through every category. Fix everything you find.
+> When inserting: always set `responder_type = 'Hospital'`, `hospital_id = <id>`, `station_id = NULL`.
 
----
-
-#### 🌐 Network & CORS Errors
-*Symptoms: `CORS policy`, `ERR_CONNECTION_REFUSED`, `Network Error` in the browser console*
-
-- **Missing CORS headers on backend** → Configure `cors()` using the env variable:
-  ```js
-  const { frontendUrl } = require('./config/env');
-  app.use(cors({ origin: frontendUrl }));
-  ```
-- **Wrong port or domain in frontend `baseURL`** → Read it from `import.meta.env.VITE_API_BASE_URL`
-- **`http` vs `https` mismatch** → Make protocol consistent and driven by env
-- **Preflight `OPTIONS` failing** → Ensure backend handles `OPTIONS` on all Hospital routes
-
----
-
-#### 📦 Request Construction Errors
-*Symptoms: `400 Bad Request`, backend receives empty or malformed body*
-
-- **Missing `Content-Type: application/json`** on POST/PUT/PATCH:
-  ```js
-  headers: { 'Content-Type': 'application/json', ...authHeaders }
-  ```
-- **Body not stringified** — sending a raw JS object via `fetch` instead of `JSON.stringify(body)`
-- **Field name mismatch** — align frontend field names to match the backend's `snake_case` convention
-- **`undefined` or `null` in URL params** — guard before building the URL:
-  ```js
-  if (!hospitalId) throw new Error('Missing hospital ID');
-  const url = `${import.meta.env.VITE_API_BASE_URL}/hospitals/${hospitalId}`;
-  ```
+**If any field used in the backend or frontend is missing from the schema above — STOP and report it before proceeding.**
 
 ---
 
-#### 📥 Response Handling Errors
-*Symptoms: blank UI, crashes reading `undefined`, stale data after actions*
-
-- **Response shape mismatch** — frontend must read `response.data`, not `response.hospitals`
-- **No null/undefined guard** before reading nested fields:
-  ```js
-  const name = response?.data?.hospital_name ?? 'Unknown';
-  ```
-- **`success: false` not handled** — display the error message, do not use the data:
-  ```js
-  if (!response.success) {
-    showError(response.message);
-    return;
-  }
-  ```
-- **Stale data after mutation** — re-fetch the list after every successful POST/PUT/PATCH/DELETE
-- **Backend error message never shown** — wire `response.message` into a toast or alert on failure
-
----
-
-#### 🔄 Loading & UI State Errors
-*Symptoms: button stays stuck, spinner never appears, UI freezes*
-
-- **No loading state during API calls** → Add `isLoading` flag, show spinner, disable submit button
-- **No error state when request fails** → Show a user-visible error — never just `console.error`
-- **Loading state never resets after failure** — always reset in `finally`:
-  ```js
-  try {
-    setLoading(true);
-    await dispatchHospital(data);
-  } catch (err) {
-    showError(err.message);
-  } finally {
-    setLoading(false); // runs even if the request fails
-  }
-  ```
-- **UI doesn't reflect status change** after dispatching or resolving — trigger re-fetch or state patch after success
-
----
-
-#### 🔑 Auth & Token Errors
-*Symptoms: `401 Unauthorized` on Hospital endpoints*
-
-- **Token not attached** — read the key from the env variable:
-  ```js
-  const tokenKey = import.meta.env.VITE_AUTH_TOKEN_KEY;
-  const token = localStorage.getItem(tokenKey);
-  headers: { Authorization: `Bearer ${token}` }
-  ```
-- **Wrong localStorage key** — the key used on login and the key used on every API call must match exactly; both must come from the same env variable
-- **No `401` handler** — if the backend returns `401`, redirect the user to the login page
-
----
-
-#### 🗺️ Frontend Routing Errors
-*Symptoms: blank page, crash on navigation, `undefined` params*
-
-- **Hospital page route missing** from the frontend router → Add it
-- **Route param is undefined** on navigation:
-  ```js
-  const { hospitalId } = useParams();
-  if (!hospitalId) return <Navigate to="/hospitals" />;
-  ```
-- **API fires before auth is ready** — guard the fetch behind an auth-ready check or use the existing auth context
-
----
-
-### Phase 3 — Full Integration Checklist
-
-**Pre-Implementation (Phase 0)**
-- [ ] All Hospital frontend fields inventoried and documented
-- [ ] Every field cross-checked against Supabase — no missing columns
-- [ ] Any schema gaps reported and confirmed resolved before proceeding
-- [ ] Verified field contract written and used as the implementation reference
-
-**Environment & Configuration**
-- [ ] `.env` file created with all required keys (not committed to version control)
-- [ ] `src/config/env.js` validates all required vars at startup and exits on missing values
-- [ ] Backend reads every URL, port, secret, and credential from `process.env`
-- [ ] Frontend reads API base URL and token key from `import.meta.env` (or equivalent)
-- [ ] No hardcoded string contains a URL, port, credential, or environment-specific value anywhere
-
-**Backend**
-- [ ] All 10 routes implemented and mounted in `app.js` / `server.js`
-- [ ] CORS configured with `frontendUrl` from env — never a hardcoded origin
-- [ ] `express.json()` middleware active — request bodies are parsed
-- [ ] All responses use the standard `{ success, message, data }` shape
-- [ ] No route returns `undefined` or an empty body on success
-- [ ] No unhandled promise rejections anywhere
-
-**Frontend**
-- [ ] Audited all Hospital frontend files — URLs, methods, body shapes, response fields documented
-- [ ] API base URL read from env variable — never hardcoded
-- [ ] `Content-Type: application/json` sent on all POST/PUT/PATCH calls
-- [ ] Auth token key read from env variable; token attached to all authenticated requests
-- [ ] Request body field names match backend validator expectations exactly
-- [ ] Response fields read by the frontend match exactly what the backend returns
-- [ ] `success: false` responses display a visible error message to the user
-- [ ] Loading state shown during every API call; resets in `finally`
-- [ ] Data re-fetched or local state updated after every successful mutation
-- [ ] No `undefined` values in API call URLs — params validated before use
-- [ ] All fetch/axios errors are caught and shown to the user
-
-**Both**
-- [ ] No hardcoded URLs, ports, or credentials anywhere — all from `.env`
-- [ ] No `console.log` left in production code paths
-- [ ] No `TODO` or stub comments anywhere in Hospital files
-
----
-
-## 🧪 Testing Requirements (`hospital.test.js`)
-
-Tests must read any base URLs or credentials from env variables — never hardcode them.
-
-- [ ] `GET /api/hospitals` — returns list, handles empty DB gracefully
-- [ ] `GET /api/hospitals/:id` — found returns data; not found returns `404`
-- [ ] `POST /api/hospitals` — valid input creates record; invalid input returns `400`
-- [ ] `POST /api/hospitals/dispatch` — success; duplicate → `409`; inactive hospital → `404`; inactive incident → `404`
-- [ ] `PATCH /api/hospitals/dispatch/:id/status` — valid transitions work; backwards/invalid → `422`
-- [ ] All validators reject bad or missing input with correct status codes and messages
-
----
-
-## 🚫 Out of Scope — Do Not Touch
+## Required Backend File Structure
 
 ```
-src/modules/police/     ← Hands off
-src/modules/admin/      ← Hands off
-src/modules/auth/       ← Do not modify existing auth logic
-Database schema files   ← No ALTER TABLE, no migrations outside hospital
+src/
+├── config/
+│   └── env.js
+└── modules/
+    └── hospital/
+        ├── hospital.routes.js
+        ├── hospital.controller.js
+        ├── hospital.service.js
+        ├── hospital.repository.js
+        ├── hospital.validator.js
+        └── hospital.test.js
 ```
-
-Any frontend page, component, or API call that is **not related to Hospital** is also out of scope.
-If you find a bug in the Police or Admin frontend — **report it, do not fix it.**
 
 ---
 
-## 📌 Definition of Done
+## Environment Variables
 
-Your task is complete **only when ALL of the following are true**:
+```env
+PORT=
+NODE_ENV=
+DATABASE_URL=
+JWT_SECRET=
+JWT_EXPIRES_IN=7d
+FRONTEND_URL=
+```
 
-1. All Hospital frontend fields audited and verified present in Supabase — no schema gaps remain
-2. All 10 backend endpoints implemented, working, and tested
-3. Backend file structure matches the 6-file module layout exactly (plus `src/config/env.js`)
-4. All input validation returns correct HTTP status codes
-5. Dispatch business logic enforced without exception
-6. Frontend calls every Hospital endpoint successfully with **zero browser console errors**
-7. Every frontend bug discovered during integration is found and fixed (Hospital scope only)
-8. UI correctly shows loading states, error messages, and updated data after every action
-9. Auth tokens correctly attached wherever required, using the env-variable key
-10. **No hardcoded URLs, ports, credentials, or environment-specific values anywhere**
-11. All tests pass
+`src/config/env.js` must validate all required vars at startup and call `process.exit(1)` if any are missing.
+Frontend must use `VITE_API_BASE_URL` and `VITE_AUTH_TOKEN_KEY` — never hardcode URLs or keys.
 
-> **One broken UI interaction, one incomplete endpoint, or one hardcoded value = task is NOT done. No exceptions.**
+---
+
+## API Endpoints (all 10 required)
+
+| Method | Route | Description |
+|---|---|---|
+| GET | `/api/hospitals` | List all active hospitals |
+| GET | `/api/hospitals/:id` | Get hospital by ID |
+| POST | `/api/hospitals` | Register hospital |
+| PUT | `/api/hospitals/:id` | Update hospital |
+| PATCH | `/api/hospitals/:id/status` | Toggle is_active |
+| DELETE | `/api/hospitals/:id` | Soft delete (is_active = false) |
+| POST | `/api/hospitals/dispatch` | Dispatch hospital to incident |
+| GET | `/api/hospitals/dispatch/:incident_id` | Get dispatch for incident |
+| PATCH | `/api/hospitals/dispatch/:dispatch_id/status` | Update dispatch status |
+| GET | `/api/hospitals/:hospital_id/dispatches` | All dispatches for hospital |
+
+---
+
+## Dispatch Business Logic
+
+**Creating a dispatch:**
+1. Verify incident exists and `is_active = true`
+2. Verify hospital exists and `is_active = true`
+3. Reject duplicate Hospital dispatch for same incident → `409`
+4. Insert with `responder_type = 'Hospital'`, `station_id = NULL`
+
+**Updating dispatch status:**
+- Only allow: `Pending → En Route → Resolved`
+- On `Resolved`: set `incidents.is_active = false` (**no `resolved_at` — column does not exist**)
+- Any backward/invalid transition → `422 Unprocessable Entity`
+
+---
+
+## Response Format
+
+```js
+// Success
+{ "success": true, "message": "...", "data": { ... } }
+
+// Error
+{ "success": false, "message": "Human-readable reason", "error": "Technical detail" }
+```
+
+| Scenario | Status |
+|---|---|
+| Not found | 404 |
+| Duplicate dispatch | 409 |
+| Validation failure | 400 |
+| Invalid status transition | 422 |
+| Server error | 500 |
+
+---
+
+## Frontend Fixes Required
+
+Check and fix every Hospital-related frontend file for:
+
+- API base URL read from `import.meta.env.VITE_API_BASE_URL` (never hardcoded)
+- `Content-Type: application/json` on all POST/PUT/PATCH
+- Auth token attached via `localStorage.getItem(import.meta.env.VITE_AUTH_TOKEN_KEY)`
+- Response read as `response.data`, guarded against null/undefined
+- `success: false` shows visible error message to user
+- Loading state shown during calls, reset in `finally`
+- Data re-fetched after every successful mutation
+- `401` response redirects to login
+
+---
+
+## Known Bugs to Fix (Active Incidents Page)
+
+These specific bugs were found in `ActiveIncidentsPage` and **must** be fixed.
+
+### Bug 1 — Hardcoded Fallback URL 🔴
+Remove `|| "http://localhost:5001"`. Replace with:
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
+```
+
+### Bug 2 — Missing Backend Endpoint 🔴
+The frontend calls `GET /api/hospitals/incidents/active` which is **not in the required API spec**.
+Add this endpoint to the backend:
+- Returns all incidents where `is_active = true`
+- Requires auth token
+- Returns `{ success: true, data: Incident[] }`
+
+### Bug 3 — Status Update Checks `.ok` Instead of `data.success`
+Parse the response body and check `data.success` instead of just `.ok`:
+```ts
+const d1 = await p1.json()
+if (!d1.success) throw new Error(d1.message || "Failed to update to En Route")
+const d2 = await p2.json()
+if (!d2.success) throw new Error(d2.message || "Failed to resolve")
+```
+
+### Bug 4 — `dispatch.incidents` Always `undefined` Without JOIN
+`GET /api/hospitals/:hospital_id/dispatches` must JOIN `incidents` so location data is returned.
+The repository query must be:
+```sql
+SELECT d.*, i.latitude, i.longitude, i.detected_at, i.is_active
+FROM incident_dispatch d
+JOIN incidents i ON i.incident_id = d.incident_id
+WHERE d.hospital_id = $1
+```
+Without this JOIN, every dispatch card shows **"Unknown Location"**.
+
+### Bug 5 — Auth Token Key May Be Hardcoded in `auth-provider`
+Verify the localStorage key in `auth-provider` comes from an env variable, not hardcoded as `"token"` or `"authToken"`. Both login (write) and every API call (read) must use the same env variable key.
+
+### Bug 6 — No `401` Redirect to Login
+After every fetch call, check for `401` and redirect:
+```ts
+if (res.status === 401) { router.push("/login"); return }
+```
+
+---
+
+## Known Bugs to Fix (Backend — hospital.routes.js, hospital.repository.js, hospital.controller.js)
+
+### Bug B1 — Route Order: `GET /:id` Shadows `GET /:hospital_id/dispatches` 🔴
+**File:** `hospital.routes.js`
+`GET /:id` is registered before `GET /:hospital_id/dispatches`, so `/123/dispatches` is caught by `/:id` and the dispatches route never fires. Move dispatches route above `GET /:id`:
+```js
+router.get('/:hospital_id/dispatches', validator.validateHospitalIdParam, controller.getDispatchesByHospital);
+router.get('/:id', validator.validateHospitalId, controller.getHospitalById); // must come after
+```
+
+### Bug B2 — `req.params.id` Passed as String, Not Integer 🔴
+**File:** `hospital.controller.js`
+`req.params` values are always strings. Pass them as integers to the service:
+```js
+await service.getHospitalById(parseInt(req.params.id, 10))
+await service.updateHospital(parseInt(req.params.id, 10), req.body)
+await service.toggleHospitalStatus(parseInt(req.params.id, 10))
+await service.deleteHospital(parseInt(req.params.id, 10))
+await service.getDispatchesByHospital(parseInt(req.params.hospital_id, 10))
+```
+
+### Bug B3 — `create()` Accepts Unused `password` Parameter 🟡
+**File:** `hospital.repository.js`
+The `create()` function destructures a `password` param that is never sent by the frontend or validated. Remove it and hardcode `'temp_password'` directly:
+```js
+const create = async ({ hospital_name, address, city, phone, email, bed_capacity }) => {
+  // ... insert with password_hash: 'temp_password'
+}
+```
+
+---
+
+## Known Bugs to Fix (Frontend Components)
+
+### Bug F1 — Hardcoded localStorage Keys in `auth-provider.tsx` 🔴
+All 6 localStorage calls use hardcoded string keys `"token"` and `"hospital"`. Both must come from env variables:
+```ts
+const TOKEN_KEY = process.env.NEXT_PUBLIC_AUTH_TOKEN_KEY!
+const HOSPITAL_KEY = process.env.NEXT_PUBLIC_HOSPITAL_KEY!
+// Replace all: localStorage.getItem("token") → localStorage.getItem(TOKEN_KEY)
+// Replace all: localStorage.setItem("token", ...) → localStorage.setItem(TOKEN_KEY, ...)
+// Same for "hospital" → HOSPITAL_KEY
+```
+
+### Bug F2 — Hardcoded Fallback URLs in 3 Files 🔴
+**Files:** `header.tsx` (line 7), `hospital-login-form.tsx` (line 11), `sidebar.tsx` (lines 24–27, twice inline)
+All use `|| "http://localhost:5001"`. Remove every fallback:
+```ts
+// ❌ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+// ✅ const API_URL = process.env.NEXT_PUBLIC_API_URL
+//    if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
+```
+
+### Bug F3 — No `401` Redirect in `page.tsx`, `header.tsx`, `sidebar.tsx` 🔴
+None of these files check for `401` responses. After every fetch, add:
+```ts
+if (res.status === 401) { router.push("/login"); return }
+```
+
+### Bug F4 — `handleResolve` Checks `.ok` Instead of `data.success` in `page.tsx` 🔴
+Already documented as Bug 3 above — applies specifically to `page.tsx` `handleResolve` function.
+
+### Bug F5 — Silent `catch` Block in `sidebar.tsx` 🟡
+```ts
+} catch (e) {}  // swallows all errors silently
+```
+At minimum log the error in dev and handle `401` explicitly.
+
+### Bug F6 — `hospital_id` Can Be `undefined` in `header.tsx` Dispatch Body 🟡
+`hospital?.hospital_id` can be `undefined` if session is lost. Add guard before the fetch:
+```ts
+if (!hospital?.hospital_id) {
+  setError("Hospital session not found. Please log in again.")
+  return
+}
+```
+
+### Bug F7 — No Guard for Missing `session` Object in `hospital-login-form.tsx` 🟡
+```ts
+// ❌ Crashes if data.data.session is undefined
+login(data.data.session.access_token, ...)
+
+// ✅ Fix
+if (!data.data?.session?.access_token) {
+  setError("Login failed: invalid server response")
+  return
+}
+```
+
+### Bug F8 — `Status` Type in `active-incident-card.tsx` Includes Dead Values 🟡
+`"In Progress"` and `"Dispatched"` are in the `Status` type but the backend never sends them. Tighten to match backend reality:
+```ts
+type Status = "Pending" | "En Route" | "Resolved"
+```
+
+### Bug F9 — `dispatchesData.data` Accessed Without Null Check in `page.tsx` 🟡
+Inside `if (incidentsData.success)`, `dispatchesData.data` is used without checking `dispatchesData.success` first — causes crash if dispatches call failed:
+```ts
+const dispatchedIncidentIds = new Set(
+  (dispatchesData.success ? (dispatchesData.data as Dispatch[]) : []).map((d) => d.incident_id)
+)
+```
+
+
+---
+
+## Known Bugs to Fix (Page-Level Frontend Files)
+
+### Bug P1 — Hardcoded Fallback URLs in 6 Page Files 🔴
+Every page that makes API calls uses `|| "http://localhost:5001"`. Remove the fallback from ALL of these files:
+- `settings/page.tsx` (inside `handleChangePassword` function)
+- `active-incidents/page.tsx` (line 9)
+- `ambulance-fleet/page.tsx` (line 9)
+- `dashboard/page.tsx` (line 10)
+- `register/page.tsx` (line 9)
+- `incident-history/page.tsx` (line 7)
+
+Replace every occurrence with:
+```ts
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
+```
+
+### Bug P2 — `handleResolve` in `dashboard/page.tsx` Checks `.ok` Instead of `data.success` 🔴
+Same as Bug F4 — also present in the dashboard page:
+```ts
+// ❌
+if (!p1.ok) throw new Error("Failed to update status to En Route")
+if (!p2.ok) throw new Error("Failed to update status to Resolved")
+
+// ✅ Fix
+const d1 = await p1.json()
+if (!d1.success) throw new Error(d1.message || "Failed to update to En Route")
+const d2 = await p2.json()
+if (!d2.success) throw new Error(d2.message || "Failed to resolve")
+```
+
+### Bug P3 — No `401` Redirect in `settings`, `dashboard`, `ambulance-fleet`, `incident-history` 🔴
+None of these pages redirect to login on `401`. All fetch calls need:
+```ts
+if (res.status === 401) { router.push("/login"); return }
+```
+`settings/page.tsx` does not import `useRouter` at all — it must be added before this fix can be applied.
+
+### Bug P4 — `register/page.tsx` Sends `password` But Backend Always Stores `'temp_password'` 🔴
+The registration form sends `password: form.password` to `POST /api/hospitals`, but `hospital.repository.js` `create()` ignores the `password` field and always stores `password_hash = 'temp_password'`. This means:
+1. The hospital record has `password_hash = 'temp_password'`
+2. Step 2 calls `POST /api/auth/register` with the real password
+3. Supabase auth has the real password; the hospitals table has `'temp_password'`
+4. Login via `hospital.email` will use Supabase auth (works), but `change-password` endpoint that reads `hospitals.password_hash` will break
+
+**Fix required in both files:**
+- `hospital.repository.js` `create()`: accept and hash the password before storing
+- `register/page.tsx`: ensure the password is correctly passed through
+
+### Bug P5 — `register/page.tsx` No Rollback If Step 2 Fails After Step 1 Succeeds 🔴
+If hospital record is created (Step 1 succeeds) but Supabase auth registration fails (Step 2 fails), the hospital row exists in the DB with no auth account. The user cannot log in and cannot re-register (duplicate email). There is no cleanup call.
+**Fix:** Either use a backend transaction endpoint that does both steps atomically, or add a DELETE call to remove the hospital record if Step 2 fails.
+
+### Bug P6 — `ambulance-fleet/page.tsx` Silent `catch` — No Error Shown to User 🟡
+```ts
+} catch {
+  setFleet([])  // user sees empty fleet with no explanation
+}
+```
+Add an error state and display a message:
+```ts
+} catch {
+  setFleet([])
+  setError("Failed to load fleet data. Please try again.")
+}
+```
+
+### Bug P7 — `dashboard/page.tsx` No Loading State on `handleResolve` 🟡
+The Resolve button in the dashboard has no `isResolving` state — it stays clickable during the API call. Double-clicking can submit duplicate status update requests, potentially causing a `422` invalid transition error. Add an `isResolving` flag and disable the button while the call is in progress.
+
+### Bug P8 — `register/page.tsx` `password` Field Not in Backend Validator 🟡
+`validateCreateHospital` in `hospital.validator.js` does not validate the `password` field. It is silently passed through and ignored. The validator must either include `password` validation (if the backend starts using it after Bug P4 is fixed), or the frontend should stop sending it until the backend supports it.
+
+### Bug P9 — `settings/page.tsx` Dark Mode Toggle Is Non-Functional 🟡
+The `darkMode` state toggles correctly in React but never applies a CSS class to `<html>` or `<body>`. The toggle does nothing visible.
+**Fix:** Apply the dark class on toggle:
+```ts
+onChange={() => {
+  setDarkMode(!darkMode)
+  document.documentElement.classList.toggle("dark", !darkMode)
+}}
+```
+
+### Bug P10 — `profile/page.tsx` Static Fake Data Presented as Real Hospital Information 🟡
+The following values are hardcoded and fabricated — they are not from the database:
+- Establishment date: `"January 15, 1985"` (hardcoded)
+- Certifications: Joint Commission, Level 1 Trauma, Stroke Center, Cardiac Care (all fake)
+- Staff count: calculated as `beds * 2` (made up formula)
+- Department names and staff counts (all hardcoded)
+
+These are displayed as factual hospital data. Either remove them or clearly mark them as placeholder/demo data.
+
+---
+
+## Out of Scope — Do Not Touch
+
+- `src/modules/police/` — hands off
+- `src/modules/admin/` — hands off
+- `src/modules/auth/` — do not modify
+- Any frontend page unrelated to Hospital
+- Database schema — no ALTER TABLE, no migrations
+
+---
+
+## Definition of Done
+
+- [ ] Schema verified — no missing or mismatched columns
+- [ ] All 10 endpoints implemented, no stubs
+- [ ] `resolved_at` never referenced anywhere (column does not exist)
+- [ ] Dispatch logic enforces one-way status transitions
+- [ ] All responses use standard `{ success, message, data }` shape
+- [ ] Frontend reads all config from env vars — zero hardcoded values
+- [ ] Loading, error, and success UI states all work correctly
+- [ ] All tests pass
+- [ ] Zero browser console errors on Hospital pages
+- [ ] `GET /api/hospitals/incidents/active` added to backend
+- [ ] `GET /api/hospitals/:hospital_id/dispatches` JOINs `incidents` table
+- [ ] Status update responses checked via `data.success`, not just `.ok`
+- [ ] Zero hardcoded fallback URLs — no `|| "http://localhost:..."` anywhere
+- [ ] Auth token key sourced from env variable in `auth-provider` (read and write)
+- [ ] All fetch calls handle `401` with redirect to login
+- [ ] `GET /:hospital_id/dispatches` route registered BEFORE `GET /:id` in routes.js
+- [ ] All `req.params.id` values parsed with `parseInt()` in controller
+- [ ] `create()` in repository does not accept or destructure `password` param
+- [ ] `auth-provider.tsx` localStorage keys read from env variables — not hardcoded strings
+- [ ] No `|| "http://localhost:..."` fallback in header.tsx, hospital-login-form.tsx, sidebar.tsx
+- [ ] `sidebar.tsx` catch block handles errors and 401, not silently swallowed
+- [ ] `header.tsx` guards against undefined `hospital_id` before dispatch fetch
+- [ ] `hospital-login-form.tsx` guards against missing `data.data.session` before calling login()
+- [ ] `active-incident-card.tsx` Status type only includes: Pending, En Route, Resolved
+- [ ] `page.tsx` checks `dispatchesData.success` before accessing `dispatchesData.data`
+- [ ] Hardcoded fallback URLs removed from all 6 page files (settings, active-incidents, ambulance-fleet, dashboard, register, incident-history)
+- [ ] `dashboard/page.tsx` handleResolve checks `data.success`, not `.ok`
+- [ ] `settings`, `dashboard`, `ambulance-fleet`, `incident-history` all handle `401` with redirect; `settings/page.tsx` imports `useRouter`
+- [ ] Registration password flow fixed — backend stores actual password hash, not `'temp_password'`
+- [ ] Registration Step 2 failure rolls back Step 1 hospital record
+- [ ] `ambulance-fleet/page.tsx` catch block shows error to user
+- [ ] `dashboard/page.tsx` Resolve button disabled while resolving (isResolving state)
+- [ ] `register/page.tsx` password field validated by backend validator
+- [ ] `settings/page.tsx` dark mode toggle applies `dark` class to `<html>`
+- [ ] `profile/page.tsx` fake/static data is removed or clearly marked as placeholder

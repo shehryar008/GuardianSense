@@ -1,13 +1,15 @@
 "use client"
 
 import { useState } from "react"
-import { SearchIcon, PlusIcon, DownloadIcon, BellIcon } from "../shared/icons"
+import { SearchIcon, PlusIcon } from "../shared/icons"
 import { useAuth } from "../auth/auth-provider"
+import { useRouter } from "next/navigation"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 export function Header() {
   const { hospital, token } = useAuth()
+  const router = useRouter()
   const [isModalOpen, setIsModalOpen] = useState(false)
   const [incidentId, setIncidentId] = useState("")
   const [isDispatching, setIsDispatching] = useState(false)
@@ -23,6 +25,11 @@ export function Header() {
     setIsDispatching(true)
 
     try {
+      if (!hospital?.hospital_id) {
+        setError("Hospital session not found. Please log in again.")
+        return
+      }
+
       const res = await fetch(`${API_URL}/api/hospitals/dispatch`, {
         method: "POST",
         headers: {
@@ -31,16 +38,17 @@ export function Header() {
         },
         body: JSON.stringify({
           incident_id: Number(incidentId),
-          hospital_id: hospital?.hospital_id
+          hospital_id: hospital.hospital_id
         })
       })
+
+      if (res.status === 401) { router.push("/login"); return }
 
       const data = await res.json()
 
       if (data.success) {
         setSuccess("Ambulance dispatched successfully!")
         setIncidentId("")
-        // Close modal and refresh to show new dispatch
         setTimeout(() => {
           setIsModalOpen(false)
           setSuccess("")
@@ -79,16 +87,13 @@ export function Header() {
               <PlusIcon className="w-4 h-4" />
               Manual Dispatch
             </button>
-            <button className="flex items-center gap-2 px-4 py-2.5 border border-gray-200 rounded-full hover:bg-gray-50 transition-colors text-gray-700">
-              <DownloadIcon className="w-4 h-4" />
-              Export Data
-            </button>
-            <button className="relative p-2 hover:bg-gray-100 rounded-full transition-colors">
-              <BellIcon className="w-5 h-5 text-gray-600" />
-              <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full" />
-            </button>
-            <div className="w-10 h-10 bg-gradient-to-br from-teal-500 to-teal-600 rounded-full flex items-center justify-center">
-              <span className="text-white font-medium text-sm">DR</span>
+            <div className="flex items-center gap-2 px-4 py-2 bg-gray-50 rounded-full border border-gray-200">
+              <div className="w-8 h-8 bg-gradient-to-br from-teal-500 to-teal-600 rounded-full flex items-center justify-center">
+                <span className="text-white font-medium text-xs">{String(hospital?.hospital_name || "H").charAt(0)}</span>
+              </div>
+              <span className="text-sm font-medium text-gray-700 max-w-[200px] truncate">
+                {String(hospital?.hospital_name || "Hospital")}
+              </span>
             </div>
           </div>
         </div>

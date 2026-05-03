@@ -1,39 +1,35 @@
 "use client"
 
-import { MapPinIcon, ClockIcon, UsersIcon } from "../shared/icons"
+import { MapPinIcon } from "../shared/icons"
 
-type Status = "In Progress" | "Dispatched" | "En Route"
+type Status = "Pending" | "En Route" | "Resolved"
 
 interface ActiveIncidentCardProps {
   title: string
   location: string
-  responders: string
-  eta: string
-  casualties: string
   status: Status
   onResolve?: () => void
 }
 
 const statusConfig: Record<Status, { bgColor: string; textColor: string }> = {
-  "In Progress": { bgColor: "bg-emerald-50", textColor: "text-emerald-600" },
-  Dispatched: { bgColor: "bg-teal-50", textColor: "text-teal-600" },
+  "Pending": { bgColor: "bg-amber-50", textColor: "text-amber-600" },
   "En Route": { bgColor: "bg-emerald-50", textColor: "text-emerald-600" },
+  "Resolved": { bgColor: "bg-gray-50", textColor: "text-gray-600" },
 }
+
+const defaultStatusStyle = { bgColor: "bg-gray-50", textColor: "text-gray-600" }
 
 export function ActiveIncidentCard({
   title,
   location,
-  responders,
-  eta,
-  casualties,
   status,
   onResolve,
 }: ActiveIncidentCardProps) {
-  const statusStyle = statusConfig[status]
+  const statusStyle = statusConfig[status] || defaultStatusStyle
 
   return (
     <div className="bg-white rounded-2xl border border-gray-100 p-5 shadow-sm">
-      <div className="flex items-start justify-between">
+      <div className="flex items-center justify-between">
         {/* Left section with icon and details */}
         <div className="flex gap-4">
           {/* Alert icon */}
@@ -55,49 +51,22 @@ export function ActiveIncidentCard({
           </div>
         </div>
 
-        {/* Status badge */}
-        <span className={`text-sm font-medium px-3 py-1 rounded-lg ${statusStyle.bgColor} ${statusStyle.textColor}`}>
-          {status}
-        </span>
-      </div>
-
-      {/* Stats row */}
-      <div className="flex items-center justify-between mt-4 ml-14">
-        <div className="flex items-center gap-12">
-          <div className="flex items-center gap-2">
-            <UsersIcon className="w-4 h-4 text-gray-400" />
-            <div>
-              <p className="text-xs text-gray-400">Responders</p>
-              <p className="text-sm font-medium text-gray-900">{responders}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <ClockIcon className="w-4 h-4 text-gray-400" />
-            <div>
-              <p className="text-xs text-gray-400">ETA</p>
-              <p className="text-sm font-medium text-gray-900">{eta}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <div className="w-4 h-4 rounded-full border-2 border-gray-400 flex items-center justify-center">
-              <div className="w-1.5 h-1.5 rounded-full bg-gray-400" />
-            </div>
-            <div>
-              <p className="text-xs text-gray-400">Casualties</p>
-              <p className="text-sm font-medium text-gray-900">{casualties}</p>
-            </div>
-          </div>
+        {/* Right section */}
+        <div className="flex items-center gap-3">
+          <span className={`text-sm font-medium px-3 py-1 rounded-lg ${statusStyle.bgColor} ${statusStyle.textColor}`}>
+            {status}
+          </span>
+          {onResolve && (
+            <button
+              onClick={onResolve}
+              className="px-5 py-2 bg-teal-500 hover:bg-teal-600 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
+            >
+              Resolve
+            </button>
+          )}
         </div>
-
-        {onResolve && (
-          <button 
-            onClick={onResolve}
-            className="px-5 py-2 bg-teal-500 hover:bg-teal-600 text-white text-sm font-medium rounded-lg transition-colors shadow-sm"
-          >
-            Resolve
-          </button>
-        )}
       </div>
     </div>
   )
 }
+

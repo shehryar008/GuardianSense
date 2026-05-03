@@ -8,7 +8,7 @@ import { Button } from "../../../components/ui/button"
 import { Input } from "../../../components/ui/input"
 import { Checkbox } from "../../../components/ui/checkbox"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 interface FormData {
   hospital_name: string
@@ -109,8 +109,16 @@ export default function HospitalRegistrationPage() {
       const authData = await authRes.json()
 
       if (!authRes.ok || !authData.success) {
-        // Hospital was created but auth failed — still show partial success
-        setError(authData.message || "Hospital registered, but account creation failed. Contact admin.")
+        // Rollback: delete the hospital record since auth failed
+        try {
+          await fetch(`${API_URL}/api/hospitals/${hospitalData.data.hospital_id}`, {
+            method: "DELETE",
+          })
+        } catch {
+          // Rollback failed — log but don't mask the original error
+          console.error("Failed to rollback hospital record after auth failure")
+        }
+        setError(authData.message || "Registration failed. Please try again.")
         return
       }
 

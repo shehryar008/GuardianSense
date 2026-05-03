@@ -1,4 +1,5 @@
 import { AlertTriangleIcon } from "../shared/icons"
+import Link from "next/link"
 
 interface CriticalAlertProps {
   message: string
@@ -16,9 +17,12 @@ export function CriticalAlert({ message }: CriticalAlertProps) {
           <p className="text-sm mt-1">{message}</p>
         </div>
       </div>
-      <button className="px-6 py-2 bg-white text-red-500 rounded-lg font-medium hover:bg-gray-100 transition-colors">
+      <Link
+        href="/active-incidents"
+        className="px-6 py-2 bg-white text-red-500 rounded-lg font-medium hover:bg-gray-100 transition-colors"
+      >
         Check Now
-      </button>
+      </Link>
     </div>
   )
 }
