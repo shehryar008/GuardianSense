@@ -4,7 +4,6 @@ import {
   HeartIcon,
   LayoutDashboardIcon,
   AlertTriangleIcon,
-  AmbulanceIcon,
   HistoryIcon,
   UserIcon,
   SettingsIcon,
@@ -12,6 +11,9 @@ import {
 import Link from "next/link"
 import { useAuth } from "../auth/auth-provider"
 import { useEffect, useState } from "react"
+import { useRouter } from "next/navigation"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 interface SidebarProps {
   activeItem?: string
@@ -19,28 +21,60 @@ interface SidebarProps {
 
 export function Sidebar({ activeItem = "Dashboard" }: SidebarProps) {
   const { logout, hospital, token } = useAuth()
+  const router = useRouter()
   const [activeCount, setActiveCount] = useState(0)
 
   useEffect(() => {
     if (!hospital?.hospital_id || !token) return
-    const fetchActiveDispatches = async () => {
+    const fetchActiveCounts = async () => {
       try {
-        const url = `${process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"}/api/hospitals/${hospital.hospital_id}/dispatches`
-        const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } })
-        const data = await res.json()
-        if (data.success) {
-          const count = data.data.filter((d: any) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route").length
-          setActiveCount(count)
+        const [dispatchRes, incidentRes] = await Promise.all([
+          fetch(`${API_URL}/api/hospitals/${hospital.hospital_id}/dispatches`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+          fetch(`${API_URL}/api/hospitals/incidents/active`, {
+            headers: { Authorization: `Bearer ${token}` },
+          }),
+        ])
+
+        if (dispatchRes.status === 401 || incidentRes.status === 401) {
+          router.push("/login")
+          return
         }
-      } catch (e) {}
+
+        const dispatchData = await dispatchRes.json()
+        const incidentData = await incidentRes.json()
+
+        let count = 0
+
+        // Count active dispatches (Pending / En Route)
+        if (dispatchData.success) {
+          const activeDispatchCount = dispatchData.data.filter(
+            (d: Record<string, unknown>) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route"
+          ).length
+          count += activeDispatchCount
+
+          // Count unassigned incidents (not yet dispatched by this hospital)
+          if (incidentData.success) {
+            const dispatchedIds = new Set(dispatchData.data.map((d: Record<string, unknown>) => d.incident_id))
+            const unassigned = incidentData.data.filter(
+              (inc: Record<string, unknown>) => !dispatchedIds.has(inc.incident_id)
+            ).length
+            count += unassigned
+          }
+        }
+
+        setActiveCount(count)
+      } catch (e) {
+        console.error("Sidebar: Failed to fetch active counts", e)
+      }
     }
-    fetchActiveDispatches()
+    fetchActiveCounts()
   }, [hospital?.hospital_id, token])
 
   const navItems = [
     { icon: LayoutDashboardIcon, label: "Dashboard", href: "/dashboard" },
     { icon: AlertTriangleIcon, label: "Active Incidents", badge: activeCount, href: "/active-incidents" },
-    { icon: AmbulanceIcon, label: "Ambulance Fleet", href: "/ambulance-fleet" },
     { icon: HistoryIcon, label: "Incident History", href: "/incident-history" },
     { icon: UserIcon, label: "Profile", href: "/profile" },
     { icon: SettingsIcon, label: "Settings", href: "/settings" },

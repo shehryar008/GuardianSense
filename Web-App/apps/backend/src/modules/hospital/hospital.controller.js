@@ -30,7 +30,7 @@ const getAllHospitals = async (req, res) => {
 const getHospitalById = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const hospital = await service.getHospitalById(req.params.id);
+    const hospital = await service.getHospitalById(parseInt(req.params.id, 10));
     res.json({ success: true, message: 'Hospital retrieved successfully', data: hospital });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -52,7 +52,7 @@ const createHospital = async (req, res) => {
 const updateHospital = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const hospital = await service.updateHospital(req.params.id, req.body);
+    const hospital = await service.updateHospital(parseInt(req.params.id, 10), req.body);
     res.json({ success: true, message: 'Hospital updated successfully', data: hospital });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -63,7 +63,7 @@ const updateHospital = async (req, res) => {
 const toggleStatus = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const hospital = await service.toggleHospitalStatus(req.params.id);
+    const hospital = await service.toggleHospitalStatus(parseInt(req.params.id, 10));
     res.json({ success: true, message: `Hospital ${hospital.is_active ? 'activated' : 'deactivated'} successfully`, data: hospital });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -74,11 +74,23 @@ const toggleStatus = async (req, res) => {
 const deleteHospital = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const hospital = await service.deleteHospital(req.params.id);
+    const hospital = await service.deleteHospital(parseInt(req.params.id, 10));
     res.json({ success: true, message: 'Hospital deleted (deactivated) successfully', data: hospital });
   } catch (err) {
     const status = err.statusCode || 500;
     res.status(status).json({ success: false, message: err.message, error: err.message });
+  }
+};
+
+// ─── Active Incidents ───────────────────────────────────────────────────────
+
+const getActiveIncidents = async (req, res) => {
+  try {
+    const incidents = await service.getAllActiveIncidents();
+    res.json({ success: true, message: 'Active incidents retrieved successfully', data: incidents });
+  } catch (err) {
+    console.error('getActiveIncidents error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error', error: err.message });
   }
 };
 
@@ -98,7 +110,7 @@ const createDispatch = async (req, res) => {
 const getDispatchForIncident = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const dispatches = await service.getDispatchForIncident(req.params.incident_id);
+    const dispatches = await service.getDispatchForIncident(parseInt(req.params.incident_id, 10));
     res.json({ success: true, message: 'Dispatch info retrieved successfully', data: dispatches });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -109,7 +121,7 @@ const getDispatchForIncident = async (req, res) => {
 const updateDispatchStatus = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const dispatch = await service.updateDispatchStatus(req.params.dispatch_id, req.body.dispatch_status);
+    const dispatch = await service.updateDispatchStatus(parseInt(req.params.dispatch_id, 10), req.body.dispatch_status);
     res.json({ success: true, message: `Dispatch status updated to '${dispatch.dispatch_status}'`, data: dispatch });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -120,7 +132,7 @@ const updateDispatchStatus = async (req, res) => {
 const getDispatchesByHospital = async (req, res) => {
   try {
     if (!handleValidation(req, res)) return;
-    const dispatches = await service.getDispatchesByHospital(req.params.hospital_id);
+    const dispatches = await service.getDispatchesByHospital(parseInt(req.params.hospital_id, 10));
     res.json({ success: true, message: 'Hospital dispatches retrieved successfully', data: dispatches });
   } catch (err) {
     const status = err.statusCode || 500;
@@ -135,6 +147,7 @@ module.exports = {
   updateHospital,
   toggleStatus,
   deleteHospital,
+  getActiveIncidents,
   createDispatch,
   getDispatchForIncident,
   updateDispatchStatus,

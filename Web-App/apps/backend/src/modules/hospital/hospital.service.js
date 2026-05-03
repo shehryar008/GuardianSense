@@ -47,7 +47,13 @@ const deleteHospital = async (id) => {
   return repository.softDelete(id);
 };
 
-// ─── Dispatch Logic ───────────────────────────────────────────────────────────
+// ─── Dispatch Logic ─────────────────────────────────────────────────────────
+
+// ─── Active Incidents ───────────────────────────────────────────────────────
+
+const getAllActiveIncidents = async () => {
+  return repository.findAllActiveIncidents();
+};
 
 const VALID_TRANSITIONS = {
   'Pending': 'En Route',
@@ -153,6 +159,7 @@ module.exports = {
   updateHospital,
   toggleHospitalStatus,
   deleteHospital,
+  getAllActiveIncidents,
   createDispatch,
   getDispatchForIncident,
   updateDispatchStatus,

@@ -5,6 +5,8 @@ import type React from "react"
 import { useState } from "react"
 import { Sidebar } from "../../../components/dashboard/sidebar"
 import { Header } from "../../../components/dashboard/header"
+import { useAuth } from "../../../components/auth/auth-provider"
+import { useRouter } from "next/navigation"
 
 function ToggleSwitch({ enabled, onChange }: { enabled: boolean; onChange: () => void }) {
   return (
@@ -86,10 +88,71 @@ function SectionCard({
 }
 
 export default function SettingsPage() {
+  const { hospital, token } = useAuth()
+  const router = useRouter()
   const [pushNotifications, setPushNotifications] = useState(true)
   const [darkMode, setDarkMode] = useState(false)
-  const [language, setLanguage] = useState("English (US)")
-  const [timezone, setTimezone] = useState("Eastern Time (ET)")
+  
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [passwordError, setPasswordError] = useState("")
+  const [passwordSuccess, setPasswordSuccess] = useState("")
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
+
+  const handleChangePassword = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (newPassword !== confirmPassword) {
+      setPasswordError("New passwords do not match")
+      return
+    }
+
+    if (!hospital?.email || !token) {
+      setPasswordError("Session error. Please try logging in again.")
+      return
+    }
+
+    setPasswordError("")
+    setPasswordSuccess("")
+    setIsChangingPassword(true)
+
+    try {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL
+      const res = await fetch(`${API_URL}/api/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          email: hospital.email,
+          currentPassword,
+          newPassword
+        })
+      })
+
+      if (res.status === 401) { router.push("/login"); return }
+
+      const data = await res.json()
+
+      if (data.success) {
+        setPasswordSuccess("Password updated successfully!")
+        setCurrentPassword("")
+        setNewPassword("")
+        setConfirmPassword("")
+        
+        // Clear success message after 3 seconds
+        setTimeout(() => setPasswordSuccess(""), 3000)
+      } else {
+        setPasswordError(data.message || "Failed to update password")
+      }
+    } catch (err) {
+      setPasswordError("Network error occurred. Please try again.")
+    } finally {
+      setIsChangingPassword(false)
+    }
+  }
 
   return (
     <div className="flex min-h-screen bg-gray-50">
@@ -149,11 +212,14 @@ export default function SettingsPage() {
                 title="Dark Mode"
                 description="Switch to dark theme"
                 enabled={darkMode}
-                onChange={() => setDarkMode(!darkMode)}
+                onChange={() => {
+                  setDarkMode(!darkMode)
+                  document.documentElement.classList.toggle("dark", !darkMode)
+                }}
               />
             </SectionCard>
 
-            {/* Security */}
+            {/* Security - Change Password */}
             <SectionCard
               icon={
                 <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -166,65 +232,72 @@ export default function SettingsPage() {
                 </svg>
               }
               iconBgColor="bg-red-100"
-              title="Security"
-              description="Manage your account security settings"
+              title="Change Password"
+              description="Update your account password"
             >
-              <div className="space-y-3">
-                <SettingButton 
-                  title="Change Password" 
-                  description="Update your account password" 
-                  onClick={() => alert("Password change functionality coming soon")} 
-                />
-                <SettingButton 
-                  title="Active Sessions" 
-                  description="Manage your logged-in devices" 
-                  onClick={() => alert("Session management coming soon")} 
-                />
-              </div>
-            </SectionCard>
-
-            {/* Regional Settings */}
-            <SectionCard
-              icon={
-                <svg className="w-5 h-5 text-teal-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    strokeWidth={2}
-                    d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 104 0 2 2 0 012-2h1.064M15 20.488V18a2 2 0 012-2h3.064M21 12a9 9 0 11-18 0 9 9 0 0118 0z"
+              <form onSubmit={handleChangePassword} className="space-y-4">
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Current Password</label>
+                  <input
+                    type="password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    placeholder="Enter current password"
+                    required
                   />
-                </svg>
-              }
-              iconBgColor="bg-teal-100"
-              title="Regional Settings"
-              description="Configure language and timezone preferences"
-            >
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-2">Language</label>
-                  <select 
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  >
-                    <option>English (US)</option>
-                    <option>Spanish</option>
-                    <option>French</option>
-                  </select>
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-600 mb-2">Timezone</label>
-                  <select 
-                    value={timezone}
-                    onChange={(e) => setTimezone(e.target.value)}
+                  <label className="block text-sm text-gray-600 mb-1">New Password</label>
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
                     className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
-                  >
-                    <option>Eastern Time (ET)</option>
-                    <option>Pacific Time (PT)</option>
-                    <option>Central Time (CT)</option>
-                  </select>
+                    placeholder="Enter new password (min 6 characters)"
+                    minLength={6}
+                    required
+                  />
                 </div>
-              </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    className="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-teal-500"
+                    placeholder="Confirm new password"
+                    minLength={6}
+                    required
+                  />
+                </div>
+
+                {passwordError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-red-600 text-sm">
+                    {passwordError}
+                  </div>
+                )}
+                {passwordSuccess && (
+                  <div className="p-3 bg-green-50 border border-green-200 rounded-lg text-green-600 text-sm">
+                    {passwordSuccess}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isChangingPassword}
+                  className="px-6 py-2.5 bg-teal-500 hover:bg-teal-600 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                >
+                  {isChangingPassword ? (
+                    <>
+                      <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                      Updating...
+                    </>
+                  ) : (
+                    "Update Password"
+                  )}
+                </button>
+              </form>
             </SectionCard>
           </div>
         </main>

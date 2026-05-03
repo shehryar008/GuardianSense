@@ -27,6 +27,10 @@ const validateCreateHospital = [
   body('bed_capacity')
     .notEmpty().withMessage('bed_capacity is required')
     .isInt({ min: 1 }).withMessage('bed_capacity must be an integer >= 1'),
+  body('password')
+    .optional()
+    .isString().withMessage('password must be a string')
+    .isLength({ min: 6 }).withMessage('password must be at least 6 characters'),
 ];
 
 const validateUpdateHospital = [
