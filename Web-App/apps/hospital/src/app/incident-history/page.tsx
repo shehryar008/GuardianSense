@@ -3,35 +3,15 @@
 import { useEffect, useState } from "react"
 import { Sidebar } from "../../../components/dashboard/sidebar"
 import { Header } from "../../../components/dashboard/header"
-import { LocationIcon, CalendarIcon, ClockIcon } from "../../../components/shared/icons"
+import { LocationIcon, CalendarIcon } from "../../../components/shared/icons"
 import { useAuth } from "../../../components/auth/auth-provider"
+import { useRouter } from "next/navigation"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
-
-function SeverityBadge({ severity }: { severity: string }) {
-  const colors: Record<string, string> = {
-    Critical: "bg-red-100 text-red-600",
-    High: "bg-orange-100 text-orange-600",
-    Medium: "bg-gray-200 text-gray-600",
-    Low: "bg-green-100 text-green-600",
-  }
-  return (
-    <span className={`px-2 py-1 text-xs font-medium rounded ${colors[severity] || colors["Medium"]}`}>
-      {severity}
-    </span>
-  )
-}
-
-function calculateDuration(dispatchedAt: string, resolvedAt?: string | null) {
-  if (!resolvedAt) return "Unknown"
-  const dStart = new Date(dispatchedAt).getTime()
-  const dEnd = new Date(resolvedAt).getTime()
-  const diffMins = Math.round((dEnd - dStart) / 60000)
-  return diffMins > 0 ? `${diffMins} min` : "< 1 min"
-}
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 export default function IncidentHistoryPage() {
   const { hospital, token } = useAuth()
+  const router = useRouter()
   const [resolvedDispatches, setResolvedDispatches] = useState<Record<string, unknown>[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState("")
@@ -49,8 +29,8 @@ export default function IncidentHistoryPage() {
           },
         })
         const data = await res.json()
+        if (res.status === 401) { router.push("/login"); return }
         if (data.success) {
-          // Filter only resolved dispatches
           const resolved = data.data.filter((d: Record<string, unknown>) => d.dispatch_status === "Resolved")
           setResolvedDispatches(resolved)
         } else {
@@ -102,12 +82,6 @@ export default function IncidentHistoryPage() {
                       Date & Time
                     </th>
                     <th className="text-left px-6 py-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Duration
-                    </th>
-                    <th className="text-left px-6 py-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
-                      Severity
-                    </th>
-                    <th className="text-left px-6 py-4 text-xs font-medium text-gray-500 uppercase tracking-wider">
                       Status
                     </th>
                   </tr>
@@ -141,20 +115,6 @@ export default function IncidentHistoryPage() {
                                 : "Unknown"}
                             </span>
                           </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <ClockIcon className="w-4 h-4 text-gray-400" />
-                            <span className="text-sm text-gray-600">
-                              {/* Using detected_at or dispatched_at vs resolved_at?
-                                  The incidents table doesn't return resolved_at in our custom query.
-                                  Let's just show an estimated duration for resolved dispatches. */}
-                              {calculateDuration(String(dispatch.dispatched_at), incidents?.detected_at ? String(incidents.detected_at) : undefined)}
-                            </span>
-                          </div>
-                        </td>
-                        <td className="px-6 py-4">
-                          <SeverityBadge severity="Medium" />
                         </td>
                         <td className="px-6 py-4">
                           <div className="flex items-center gap-1 text-green-600">

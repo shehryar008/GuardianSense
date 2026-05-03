@@ -14,25 +14,28 @@ router.get('/dispatch/:incident_id', validator.validateIncidentId, controller.ge
 // PATCH /api/hospitals/dispatch/:dispatch_id/status
 router.patch('/dispatch/:dispatch_id/status', validator.validateUpdateDispatchStatus, controller.updateDispatchStatus);
 
+// GET /api/hospitals/incidents/active — all active incidents (for hospital dispatch view)
+router.get('/incidents/active', controller.getActiveIncidents);
+
 // GET /api/hospitals
 router.get('/', controller.getAllHospitals);
-
-// GET /api/hospitals/:id
-router.get('/:id', validator.validateHospitalId, controller.getHospitalById);
 
 // POST /api/hospitals
 router.post('/', validator.validateCreateHospital, controller.createHospital);
 
+// GET /api/hospitals/:hospital_id/dispatches — MUST come BEFORE /:id
+router.get('/:hospital_id/dispatches', validator.validateHospitalIdParam, controller.getDispatchesByHospital);
+
+// PATCH /api/hospitals/:id/status — MUST come BEFORE /:id
+router.patch('/:id/status', validator.validateHospitalId, controller.toggleStatus);
+
+// GET /api/hospitals/:id
+router.get('/:id', validator.validateHospitalId, controller.getHospitalById);
+
 // PUT /api/hospitals/:id
 router.put('/:id', validator.validateUpdateHospital, controller.updateHospital);
 
-// PATCH /api/hospitals/:id/status
-router.patch('/:id/status', validator.validateHospitalId, controller.toggleStatus);
-
 // DELETE /api/hospitals/:id
 router.delete('/:id', validator.validateHospitalId, controller.deleteHospital);
-
-// GET /api/hospitals/:hospital_id/dispatches
-router.get('/:hospital_id/dispatches', validator.validateHospitalIdParam, controller.getDispatchesByHospital);
 
 module.exports = router;

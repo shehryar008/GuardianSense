@@ -6,7 +6,7 @@ import { useState } from "react"
 import { UserIcon, LockIcon, EyeIcon, EyeOffIcon, ShieldCheckIcon } from "../shared/icons"
 import { useAuth } from "../auth/auth-provider"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 export function HospitalLoginForm() {
   const [showPassword, setShowPassword] = useState(false)
@@ -32,6 +32,12 @@ export function HospitalLoginForm() {
 
       if (!res.ok || !data.success) {
         setError(data.message || "Invalid credentials")
+        return
+      }
+
+      // Guard against missing session data
+      if (!data.data?.session?.access_token) {
+        setError("Login failed: invalid server response")
         return
       }
 

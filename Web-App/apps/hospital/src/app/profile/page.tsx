@@ -84,7 +84,7 @@ function DepartmentItem({
 export default function ProfilePage() {
   const { hospital } = useAuth()
 
-  // Calculated metrics
+  // Estimated metrics (not from database — placeholder formulas)
   const beds = Math.max(0, Number(hospital?.bed_capacity || 0))
   const calculatedAmbulances = Math.max(2, Math.floor(beds / 25))
   const calculatedStaff = beds * 2
@@ -175,7 +175,7 @@ export default function ProfilePage() {
                   <FacilityInfoItem
                     icon={<CalendarIcon className="w-5 h-5 text-teal-600" />}
                     label="Established"
-                    value="January 15, 1985"
+                    value="N/A (placeholder)"
                     iconBgColor="bg-teal-100"
                   />
                 </div>
@@ -183,7 +183,8 @@ export default function ProfilePage() {
 
               {/* Certifications & Accreditations */}
               <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Certifications & Accreditations</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Certifications & Accreditations</h3>
+                <p className="text-xs text-gray-400 mb-4 italic">Demo data — not from database</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <CertificationCard title="Joint Commission Accredited" year="2023" iconBgColor="bg-orange-400" />
                   <CertificationCard title="Level 1 Trauma Center" year="2022" iconBgColor="bg-red-400" />
@@ -194,7 +195,8 @@ export default function ProfilePage() {
 
               {/* Key Departments */}
               <div className="bg-white rounded-2xl p-6 shadow-sm">
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Key Departments</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-1">Key Departments</h3>
+                <p className="text-xs text-gray-400 mb-4 italic">Demo data — not from database</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   <DepartmentItem
                     icon={<DepartmentIcon className="w-4 h-4" />}

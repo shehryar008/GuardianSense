@@ -1,11 +1,14 @@
 const supabase = require('../../config/db');
 
+// Columns safe to return in API responses (excludes password_hash)
+const SAFE_HOSPITAL_COLUMNS = 'hospital_id, hospital_name, address, city, phone, email, bed_capacity, is_active';
+
 // ─── Hospital CRUD ────────────────────────────────────────────────────────────
 
 const findAllActive = async () => {
   const { data, error } = await supabase
     .from('hospitals')
-    .select('*')
+    .select(SAFE_HOSPITAL_COLUMNS)
     .eq('is_active', true)
     .order('hospital_id', { ascending: true });
 
@@ -16,7 +19,7 @@ const findAllActive = async () => {
 const findById = async (id) => {
   const { data, error } = await supabase
     .from('hospitals')
-    .select('*')
+    .select(SAFE_HOSPITAL_COLUMNS)
     .eq('hospital_id', id)
     .single();
 
@@ -25,11 +28,11 @@ const findById = async (id) => {
   return data;
 };
 
-const create = async ({ hospital_name, address, city, phone, email, bed_capacity, password }) => {
+const create = async ({ hospital_name, address, city, phone, email, bed_capacity }) => {
   const { data, error } = await supabase
     .from('hospitals')
-    .insert({ hospital_name, address, city, phone, email, bed_capacity, is_active: false, password_hash: password || 'temp_password' })
-    .select()
+    .insert({ hospital_name, address, city, phone, email, bed_capacity, is_active: false, password_hash: 'temp_password' })
+    .select(SAFE_HOSPITAL_COLUMNS)
     .single();
 
   if (error) throw error;
@@ -41,7 +44,7 @@ const update = async (id, { hospital_name, address, city, phone, email, bed_capa
     .from('hospitals')
     .update({ hospital_name, address, city, phone, email, bed_capacity })
     .eq('hospital_id', id)
-    .select()
+    .select(SAFE_HOSPITAL_COLUMNS)
     .single();
 
   if (error && error.code === 'PGRST116') return null;
@@ -58,7 +61,7 @@ const toggleStatus = async (id) => {
     .from('hospitals')
     .update({ is_active: !hospital.is_active })
     .eq('hospital_id', id)
-    .select()
+    .select(SAFE_HOSPITAL_COLUMNS)
     .single();
 
   if (error) throw error;
@@ -70,7 +73,7 @@ const softDelete = async (id) => {
     .from('hospitals')
     .update({ is_active: false })
     .eq('hospital_id', id)
-    .select()
+    .select(SAFE_HOSPITAL_COLUMNS)
     .single();
 
   if (error && error.code === 'PGRST116') return null;
@@ -79,6 +82,17 @@ const softDelete = async (id) => {
 };
 
 // ─── Incident Queries ─────────────────────────────────────────────────────────
+
+const findAllActiveIncidents = async () => {
+  const { data, error } = await supabase
+    .from('incidents')
+    .select('*')
+    .eq('is_active', true)
+    .order('detected_at', { ascending: false });
+
+  if (error) throw error;
+  return data;
+};
 
 const findIncidentById = async (incidentId) => {
   const { data, error } = await supabase
@@ -148,9 +162,11 @@ const updateDispatchStatus = async (dispatchId, status) => {
 };
 
 const resolveIncident = async (incidentId) => {
+  // Note: incidents table does not have a resolved_at column in the current DB schema.
+  // Only set is_active = false to mark the incident as resolved.
   const { error } = await supabase
     .from('incidents')
-    .update({ resolved_at: new Date().toISOString(), is_active: false })
+    .update({ is_active: false })
     .eq('incident_id', incidentId);
 
   if (error) throw error;
@@ -186,6 +202,7 @@ module.exports = {
   update,
   toggleStatus,
   softDelete,
+  findAllActiveIncidents,
   findIncidentById,
   findHospitalDispatchForIncident,
   createDispatch,
