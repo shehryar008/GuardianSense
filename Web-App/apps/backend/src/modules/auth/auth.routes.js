@@ -191,4 +191,74 @@ router.post(
   }
 );
 
+// POST /api/auth/change-password
+router.post(
+  '/change-password',
+  [
+    body('email')
+      .trim()
+      .notEmpty().withMessage('Email is required')
+      .isEmail().withMessage('Must be a valid email'),
+    body('currentPassword')
+      .notEmpty().withMessage('Current password is required'),
+    body('newPassword')
+      .notEmpty().withMessage('New password is required')
+      .isLength({ min: 6 }).withMessage('New password must be at least 6 characters'),
+  ],
+  async (req, res) => {
+    try {
+      const errors = validationResult(req);
+      if (!errors.isEmpty()) {
+        return res.status(400).json({
+          success: false,
+          message: 'Validation failed',
+          error: errors.array().map((e) => e.msg).join(', '),
+        });
+      }
+
+      const { email, currentPassword, newPassword } = req.body;
+
+      // Verify current password by attempting sign-in
+      const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password: currentPassword,
+      });
+
+      if (signInError) {
+        return res.status(401).json({
+          success: false,
+          message: 'Current password is incorrect',
+          error: signInError.message,
+        });
+      }
+
+      // Update password via admin API
+      const { error: updateError } = await supabase.auth.admin.updateUserById(
+        signInData.user.id,
+        { password: newPassword }
+      );
+
+      if (updateError) {
+        return res.status(500).json({
+          success: false,
+          message: 'Failed to update password',
+          error: updateError.message,
+        });
+      }
+
+      res.json({
+        success: true,
+        message: 'Password updated successfully',
+      });
+    } catch (err) {
+      console.error('Change password error:', err);
+      res.status(500).json({
+        success: false,
+        message: 'Internal server error',
+        error: err.message,
+      });
+    }
+  }
+);
+
 module.exports = router;

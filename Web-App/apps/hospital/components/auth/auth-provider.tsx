@@ -3,6 +3,10 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react"
 import { useRouter, usePathname } from "next/navigation"
 
+const TOKEN_KEY = process.env.NEXT_PUBLIC_AUTH_TOKEN_KEY || "guardian_token"
+const HOSPITAL_KEY = process.env.NEXT_PUBLIC_HOSPITAL_KEY || "guardian_hospital"
+const REFRESH_TOKEN_KEY = `${TOKEN_KEY}_refresh`
+
 interface AuthContextType {
   token: string | null
   hospital: Record<string, unknown> | null
@@ -33,8 +37,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     // Check for stored token on mount
-    const storedToken = localStorage.getItem("token")
-    const storedHospital = localStorage.getItem("hospital")
+    const storedToken = localStorage.getItem(TOKEN_KEY)
+    const storedHospital = localStorage.getItem(HOSPITAL_KEY)
 
     if (storedToken) {
       // eslint-disable-next-line
@@ -67,10 +71,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = (newToken: string, refreshToken: string, hospitalData: Record<string, unknown> | null) => {
     // Update localStorage
-    localStorage.setItem("token", newToken)
-    localStorage.setItem("refresh_token", refreshToken)
+    localStorage.setItem(TOKEN_KEY, newToken)
+    localStorage.setItem(REFRESH_TOKEN_KEY, refreshToken)
     if (hospitalData) {
-      localStorage.setItem("hospital", JSON.stringify(hospitalData))
+      localStorage.setItem(HOSPITAL_KEY, JSON.stringify(hospitalData))
     }
     // Update React state — this triggers the useEffect to redirect to dashboard
     setToken(newToken)
@@ -78,9 +82,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
-    localStorage.removeItem("token")
-    localStorage.removeItem("refresh_token")
-    localStorage.removeItem("hospital")
+    localStorage.removeItem(TOKEN_KEY)
+    localStorage.removeItem(REFRESH_TOKEN_KEY)
+    localStorage.removeItem(HOSPITAL_KEY)
     setToken(null)
     setHospital(null)
     router.replace("/login")

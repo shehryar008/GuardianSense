@@ -5,8 +5,9 @@ import { Sidebar } from "../../../components/dashboard/sidebar"
 import { Header } from "../../../components/dashboard/header"
 import { LocationIcon, UsersIcon, AmbulanceIcon } from "../../../components/shared/icons"
 import { useAuth } from "../../../components/auth/auth-provider"
+import { useRouter } from "next/navigation"
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 type AmbulanceType = {
   id: string
@@ -78,8 +79,10 @@ function AmbulanceCard({
 
 export default function AmbulanceFleetPage() {
   const { hospital, token } = useAuth()
+  const router = useRouter()
   const [fleet, setFleet] = useState<AmbulanceType[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState("")
 
   useEffect(() => {
     if (!hospital?.hospital_id || !token) return
@@ -94,6 +97,7 @@ export default function AmbulanceFleetPage() {
           },
         })
         const data = await res.json()
+        if (res.status === 401) { router.push("/login"); return }
         if (data.success) {
           const activeDispatches = data.data.filter(
             (d: Record<string, unknown>) => d.dispatch_status === "Pending" || d.dispatch_status === "En Route"
@@ -135,8 +139,8 @@ export default function AmbulanceFleetPage() {
           setFleet(generatedFleet)
         }
       } catch {
-        // Fallback to empty fleet if error
         setFleet([])
+        setError("Failed to load fleet data. Please try again.")
       } finally {
         setIsLoading(false)
       }
