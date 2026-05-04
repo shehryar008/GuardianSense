@@ -450,9 +450,17 @@ class SensorService {
       _dataController.add(Map.from(_latestData));
     });
     _gpsSub = Geolocator.getPositionStream(
-      locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
+      locationSettings: AndroidSettings(
+        accuracy: LocationAccuracy.high,
+        distanceFilter: 0,                                    // Fire on EVERY update, not just when moved
+        intervalDuration: const Duration(milliseconds: 1000), // Request updates every 1 second
+      ),
     ).listen((p) {
-      _latestData['speed'] = p.speed * 3.6; // m/s -> km/h
+      // GPS returns speed = -1.0 when no speed fix is available.
+      // Clamp to 0 to prevent negative speeds from blocking the speed gate.
+      final double rawSpeed = p.speed;
+      _latestData['speed'] = (rawSpeed > 0) ? rawSpeed * 3.6 : 0.0; // m/s -> km/h
+      print('   📍 GPS: raw=${rawSpeed.toStringAsFixed(2)} m/s → ${_latestData['speed']!.toStringAsFixed(1)} km/h (acc: ${p.accuracy.toStringAsFixed(0)}m)');
       _dataController.add(Map.from(_latestData));
     });
 
