@@ -5,17 +5,52 @@ import type React from "react"
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { UserIcon, LockIcon, EyeIcon, EyeOffIcon, KeyIcon, UsersIcon } from "../shared/icons"
+import { useAuth } from "../auth/auth-provider"
+import Link from "next/link"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
 
 export function PoliceLoginForm() {
   const [showPassword, setShowPassword] = useState(false)
-  const [employeeId, setEmployeeId] = useState("")
+  const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [rememberMe, setRememberMe] = useState(false)
+  const [error, setError] = useState("")
+  const [isLoading, setIsLoading] = useState(false)
+  const { login } = useAuth()
   const router = useRouter()
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    router.push("/dashboard")
+    setError("")
+    setIsLoading(true)
+
+    try {
+      const res = await fetch(`${API_URL}/api/auth/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      })
+
+      const data = await res.json()
+
+      if (!data.success) {
+        setError(data.message || "Invalid credentials")
+        return
+      }
+
+      if (!data.data?.session?.access_token) {
+        setError("Login failed: invalid server response")
+        return
+      }
+
+      login(data.data.session.access_token, data.data.station || data.data.hospital) // Fallback for testing just in case
+    } catch (err) {
+      setError("Unable to connect to server. Please try again.")
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -26,20 +61,28 @@ export function PoliceLoginForm() {
         <p className="text-gray-500 text-sm mt-1">Enter your credentials to access the medical center</p>
       </div>
 
+      {/* Error Message */}
+      {error && (
+        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">
+          {error}
+        </div>
+      )}
+
       {/* Form */}
       <form onSubmit={handleSubmit} className="space-y-5">
-        {/* Employee ID Field */}
+        {/* Email Field */}
         <div>
-          <label className="block text-sm font-medium text-gray-700 mb-2">Employee ID</label>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Email Address</label>
           <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <UserIcon className="h-5 w-5 text-gray-400" />
             </div>
             <input
-              type="text"
-              value={employeeId}
-              onChange={(e) => setEmployeeId(e.target.value)}
-              placeholder="Enter your employee ID"
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="Enter your email address"
+              required
               className="w-full pl-10 pr-4 py-3 bg-blue-50/50 border border-blue-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-400"
             />
           </div>
@@ -57,6 +100,7 @@ export function PoliceLoginForm() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Enter your password"
+              required
               className="w-full pl-10 pr-12 py-3 bg-blue-50/50 border border-blue-100 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 placeholder-gray-400"
             />
             <button
@@ -92,9 +136,10 @@ export function PoliceLoginForm() {
         {/* Sign In Button */}
         <button
           type="submit"
-          className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all shadow-md"
+          disabled={isLoading}
+          className="w-full py-3 bg-gradient-to-r from-blue-500 to-blue-600 text-white font-semibold rounded-lg hover:from-blue-600 hover:to-blue-700 transition-all shadow-md disabled:opacity-50"
         >
-          Sign In
+          {isLoading ? "Signing in..." : "Sign In"}
         </button>
 
         {/* Divider */}
@@ -106,10 +151,10 @@ export function PoliceLoginForm() {
 
         {/* Request Access */}
         <div className="text-center">
-          <a href="#" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700">
+          <Link href="/register" className="inline-flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700">
             <UsersIcon className="h-4 w-4" />
-            First time user? Request access
-          </a>
+            First time user? Register your station
+          </Link>
         </div>
       </form>
 

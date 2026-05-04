@@ -22,4 +22,5 @@ module.exports = {
   jwtExpiresIn:    process.env.JWT_EXPIRES_IN || '7d',
   frontendUrl:     process.env.FRONTEND_URL || 'http://localhost:3001',
   adminFrontendUrl: process.env.ADMIN_FRONTEND_URL || 'http://localhost:3000',
+  policeFrontendUrl: process.env.POLICE_FRONTEND_URL || 'http://localhost:3002',
 };

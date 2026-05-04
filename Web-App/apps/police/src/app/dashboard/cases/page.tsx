@@ -1,134 +1,83 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Sidebar } from "../../../../components/dashboard/sidebar"
 import { Header } from "../../../../components/dashboard/header"
+import { useAuth } from "../../../../components/auth/auth-provider"
+import { format } from "date-fns"
 import {
   FileIcon,
   CheckCircleIcon,
   ClockIcon,
-  XCircleIcon,
   SearchIcon,
   CalendarIcon,
   FilterIcon,
   DownloadIcon,
-  EyeIcon,
 } from "../../../../components/shared/icons"
 
-const stats = [
-  { icon: FileIcon, value: "847", label: "Total Cases", bgColor: "bg-gray-50" },
-  { icon: CheckCircleIcon, value: "723", label: "Closed Cases", bgColor: "bg-green-50", iconColor: "text-green-600" },
-  { icon: ClockIcon, value: "94", label: "Under Review", bgColor: "bg-yellow-50", iconColor: "text-yellow-600" },
-  { icon: XCircleIcon, value: "30", label: "Dismissed", bgColor: "bg-red-50", iconColor: "text-red-600" },
-]
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
-const cases = [
-  {
-    id: "CASE-2024-001",
-    title: "Armed Robbery - Downtown Bank",
-    date: "Dec 7, 2024",
-    officer: "Det. Martinez",
-    location: "Main Street Bank",
-    priority: "CRITICAL",
-    status: "Closed",
-    outcome: "Arrested",
-  },
-  {
-    id: "CASE-2024-002",
-    title: "Domestic Violence Report",
-    date: "Dec 7, 2024",
-    officer: "Officer Chen",
-    location: "Riverside Apartments #4B",
-    priority: "HIGH",
-    status: "Closed",
-    outcome: "Resolved",
-  },
-  {
-    id: "CASE-2024-003",
-    title: "Vehicle Theft Investigation",
-    date: "Dec 6, 2024",
-    officer: "Det. Brown",
-    location: "East Side Parking Lot",
-    priority: "MEDIUM",
-    status: "Under Review",
-    outcome: "Pending",
-  },
-  {
-    id: "CASE-2024-004",
-    title: "Hit and Run Accident",
-    date: "Dec 6, 2024",
-    officer: "Officer Davis",
-    location: "Highway 101 North",
-    priority: "HIGH",
-    status: "Closed",
-    outcome: "Arrested",
-  },
-  {
-    id: "CASE-2024-005",
-    title: "Burglary - Residential",
-    date: "Dec 5, 2024",
-    officer: "Sgt. Williams",
-    location: "Oak Street Residence",
-    priority: "HIGH",
-    status: "Closed",
-    outcome: "Arrested",
-  },
-  {
-    id: "CASE-2024-006",
-    title: "Vandalism Report",
-    date: "Dec 5, 2024",
-    officer: "Officer Johnson",
-    location: "Central Park",
-    priority: "LOW",
-    status: "Closed",
-    outcome: "Resolved",
-  },
-  {
-    id: "CASE-2024-007",
-    title: "Assault Investigation",
-    date: "Dec 4, 2024",
-    officer: "Det. Martinez",
-    location: "Downtown Bar",
-    priority: "CRITICAL",
-    status: "Closed",
-    outcome: "Arrested",
-  },
-  {
-    id: "CASE-2024-008",
-    title: "Missing Person Found",
-    date: "Dec 4, 2024",
-    officer: "Officer Taylor",
-    location: "City Mall",
-    priority: "MEDIUM",
-    status: "Closed",
-    outcome: "Resolved",
-  },
-]
-
-const getPriorityColor = (priority: string) => {
-  switch (priority) {
-    case "CRITICAL":
-      return "bg-red-100 text-red-700"
-    case "HIGH":
-      return "bg-orange-100 text-orange-700"
-    case "MEDIUM":
-      return "bg-yellow-100 text-yellow-700"
-    case "LOW":
-      return "bg-green-100 text-green-700"
-    default:
-      return "bg-gray-100 text-gray-700"
-  }
+interface Incident {
+  incident_id: number
+  latitude: number
+  longitude: number
+  is_active: boolean
+  detected_at: string
 }
 
-const getStatusColor = (status: string) => {
-  switch (status) {
-    case "Closed":
-      return "bg-red-100 text-red-700"
-    case "Under Review":
-      return "bg-yellow-100 text-yellow-700"
-    default:
-      return "bg-gray-100 text-gray-700"
-  }
+interface Dispatch {
+  dispatch_id: number
+  incident_id: number
+  dispatch_status: "Pending" | "En Route" | "Resolved"
+  dispatched_at: string
+  incidents: Incident
 }
 
 export default function CaseHistoryPage() {
+  const { station, token } = useAuth()
+  const [dispatches, setDispatches] = useState<Dispatch[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+
+  const fetchDispatches = async () => {
+    if (!token || !station) return
+    setIsLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/police/${station.station_id}/dispatches`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) setDispatches(data.data || [])
+    } catch (err) {
+      console.error("Failed to fetch dispatches", err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchDispatches()
+  }, [station, token])
+
+  const stats = [
+    { icon: FileIcon, value: dispatches.length.toString(), label: "Total Cases", bgColor: "bg-gray-50" },
+    { icon: CheckCircleIcon, value: dispatches.filter(d => d.dispatch_status === "Resolved").length.toString(), label: "Resolved Cases", bgColor: "bg-green-50", iconColor: "text-green-600" },
+    { icon: ClockIcon, value: dispatches.filter(d => d.dispatch_status === "En Route").length.toString(), label: "En Route", bgColor: "bg-yellow-50", iconColor: "text-yellow-600" },
+    { icon: ClockIcon, value: dispatches.filter(d => d.dispatch_status === "Pending").length.toString(), label: "Pending", bgColor: "bg-blue-50", iconColor: "text-blue-600" },
+  ]
+
+  const getStatusColor = (status: string) => {
+    switch (status) {
+      case "Resolved":
+        return "bg-green-100 text-green-700"
+      case "En Route":
+        return "bg-yellow-100 text-yellow-700"
+      case "Pending":
+        return "bg-blue-100 text-blue-700"
+      default:
+        return "bg-gray-100 text-gray-700"
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gray-50">
       <Sidebar />
@@ -185,77 +134,63 @@ export default function CaseHistoryPage() {
               <thead className="bg-gray-50 border-b border-gray-200">
                 <tr>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Case ID
+                    Dispatch ID
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Title
+                    Incident ID
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Date & Time
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Officer
+                    Dispatched At
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Location
                   </th>
                   <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Priority
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Status
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Outcome
-                  </th>
-                  <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                    Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {cases.map((caseItem) => (
-                  <tr key={caseItem.id} className="hover:bg-gray-50">
+                {isLoading && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                      Loading dispatches...
+                    </td>
+                  </tr>
+                )}
+                {!isLoading && dispatches.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-500">
+                      No dispatches found.
+                    </td>
+                  </tr>
+                )}
+                {dispatches.map((disp) => (
+                  <tr key={disp.dispatch_id} className="hover:bg-gray-50">
                     <td className="px-4 py-4">
-                      <span className="text-sm font-medium text-blue-600">{caseItem.id}</span>
+                      <span className="text-sm font-medium text-blue-600">DISP-{disp.dispatch_id}</span>
                     </td>
                     <td className="px-4 py-4">
-                      <span className="text-sm text-gray-900">{caseItem.title}</span>
+                      <span className="text-sm text-gray-900">INC-{disp.incident_id}</span>
                     </td>
                     <td className="px-4 py-4">
-                      <span className="text-sm text-gray-500">{caseItem.date}</span>
+                      <span className="text-sm text-gray-500">
+                        {format(new Date(disp.dispatched_at), "MMM d, yyyy HH:mm")}
+                      </span>
                     </td>
                     <td className="px-4 py-4">
-                      <span className="text-sm text-gray-900">{caseItem.officer}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="text-sm text-gray-500">{caseItem.location}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span
-                        className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${getPriorityColor(
-                          caseItem.priority,
-                        )}`}
-                      >
-                        {caseItem.priority}
+                      <span className="text-sm text-gray-500">
+                        {disp.incidents?.latitude?.toFixed(4)}, {disp.incidents?.longitude?.toFixed(4)}
                       </span>
                     </td>
                     <td className="px-4 py-4">
                       <span
                         className={`inline-block px-2 py-0.5 text-xs font-medium rounded-full ${getStatusColor(
-                          caseItem.status,
+                          disp.dispatch_status,
                         )}`}
                       >
-                        {caseItem.status}
+                        {disp.dispatch_status}
                       </span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <span className="text-sm text-gray-900">{caseItem.outcome}</span>
-                    </td>
-                    <td className="px-4 py-4">
-                      <button className="p-1 text-gray-400 hover:text-gray-600">
-                        <EyeIcon className="w-5 h-5" />
-                      </button>
                     </td>
                   </tr>
                 ))}
