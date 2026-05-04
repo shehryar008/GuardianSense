@@ -6,6 +6,7 @@ const cors = require('cors');
 const hospitalRoutes = require('./src/modules/hospital/hospital.routes');
 const authRoutes = require('./src/modules/auth/auth.routes');
 const adminRoutes = require('./src/modules/admin/admin.routes');
+const policeRoutes = require('./src/modules/police/police.routes');
 
 const app = express();
 const PORT = env.port;
@@ -15,6 +16,7 @@ app.use(cors({
   origin: [
     env.frontendUrl,
     env.adminFrontendUrl,
+    env.policeFrontendUrl,
   ],
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
@@ -30,6 +32,7 @@ app.get('/api/health', (req, res) => {
 app.use('/api/auth', authRoutes);
 app.use('/api/hospitals', hospitalRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/police', policeRoutes);
 
 // 404 handler
 app.use((req, res) => {
@@ -52,7 +55,7 @@ app.use((err, req, res, next) => {
 // Start server (only when not in test mode)
 if (process.env.NODE_ENV !== 'test') {
   app.listen(PORT, () => {
-    console.log(`Hospital Backend API running on http://localhost:${PORT}`);
+    console.log(`Backend API running on http://localhost:${PORT}`);
   });
 }
 

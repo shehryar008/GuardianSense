@@ -29,14 +29,20 @@ router.post(
       const { email, password } = req.body;
 
       // First, check if this email belongs to an active hospital
-      const { data: hospital, error: hospitalError } = await supabase
+      let hospital = null;
+      let station = null;
+      let isPending = false;
+      let pendingMessage = '';
+
+      const { data: hData } = await supabase
         .from('hospitals')
         .select('*')
         .eq('email', email)
         .eq('is_active', true)
         .maybeSingle();
+      
+      hospital = hData;
 
-      // Check if hospital exists but is inactive (pending admin approval)
       if (!hospital) {
         const { data: inactiveHospital } = await supabase
           .from('hospitals')
@@ -46,12 +52,41 @@ router.post(
           .maybeSingle();
 
         if (inactiveHospital) {
-          return res.status(403).json({
-            success: false,
-            message: 'Your hospital registration is pending admin approval. Please wait for activation.',
-            error: 'Hospital is not active',
-          });
+          isPending = true;
+          pendingMessage = 'Your hospital registration is pending admin approval. Please wait for activation.';
+        } else {
+          // Check police stations
+          const { data: sData } = await supabase
+            .from('police_stations')
+            .select('station_id, station_name, address, city, phone, email, is_active')
+            .eq('email', email)
+            .eq('is_active', true)
+            .maybeSingle();
+          
+          station = sData;
+
+          if (!station) {
+            const { data: inactiveStation } = await supabase
+              .from('police_stations')
+              .select('station_id')
+              .eq('email', email)
+              .eq('is_active', false)
+              .maybeSingle();
+            
+            if (inactiveStation) {
+               isPending = true;
+               pendingMessage = 'Your police station account is inactive or deleted.';
+            }
+          }
         }
+      }
+
+      if (isPending) {
+        return res.status(403).json({
+          success: false,
+          message: pendingMessage,
+          error: 'Account is not active',
+        });
       }
 
       // Try to sign in via Supabase Auth
@@ -60,9 +95,9 @@ router.post(
         password,
       });
 
-      // If login failed and the email exists in Hospitals table,
+      // If login failed and the email exists in Hospitals or Police table,
       // auto-create the auth user and retry login
-      if (error && hospital) {
+      if (error && (hospital || station)) {
         const { error: createError } = await supabase.auth.admin.createUser({
           email,
           password,
@@ -112,6 +147,7 @@ router.post(
             email: data.user.email,
           },
           hospital: hospital || null,
+          station: station || null,
           session: {
             access_token: data.session.access_token,
             refresh_token: data.session.refresh_token,
