@@ -1,6 +1,6 @@
-# Hospital Backend Integration — Agent Instructions
+# Police Station Backend Integration — Agent Instructions
 
-> **Scope: Hospital module ONLY.** Do not touch Police, Admin, Auth, or any unrelated module.
+> **Scope: Police module ONLY.** Do not touch Hospital, Admin, Auth, or any unrelated module.
 
 ---
 
@@ -12,24 +12,25 @@ Run this query and confirm every column exists with the correct name and type:
 ```sql
 SELECT table_name, column_name, data_type
 FROM information_schema.columns
-WHERE table_name IN ('hospitals', 'incidents', 'incident_dispatch')
+WHERE table_name IN ('police_stations', 'incidents', 'incident_dispatch')
 ORDER BY table_name, ordinal_position;
 ```
 
 ### Confirmed Schema (verified against Supabase)
 
-**`hospitals`**
+**`police_stations`**
 | Column | Type |
 |---|---|
-| hospital_id | integer (PK) |
-| hospital_name | varchar |
+| station_id | integer (PK) |
+| station_name | varchar |
 | address | text |
 | city | varchar |
 | phone | varchar |
 | email | varchar |
-| bed_capacity | integer |
 | is_active | boolean |
 | password_hash | varchar |
+
+> ⚠️ `police_stations` has NO `bed_capacity` or `hospital_id` column. Do NOT reference either.
 
 **`incidents`** (READ ONLY)
 | Column | Type |
@@ -48,14 +49,14 @@ ORDER BY table_name, ordinal_position;
 | Column | Type |
 |---|---|
 | dispatch_id | integer (PK) |
-| incident_id | integer (FK) |
+| incident_id | integer (FK → incidents) |
 | responder_type | varchar — `'Hospital'` or `'Police'` |
 | hospital_id | integer (nullable) |
 | station_id | integer (nullable) |
 | dispatch_status | varchar — `'Pending'`, `'En Route'`, `'Resolved'` |
 | dispatched_at | timestamptz |
 
-> When inserting: always set `responder_type = 'Hospital'`, `hospital_id = <id>`, `station_id = NULL`.
+> When inserting for Police: always set `responder_type = 'Police'`, `station_id = <id>`, `hospital_id = NULL`.
 
 **If any field used in the backend or frontend is missing from the schema above — STOP and report it before proceeding.**
 
@@ -68,13 +69,13 @@ src/
 ├── config/
 │   └── env.js
 └── modules/
-    └── hospital/
-        ├── hospital.routes.js
-        ├── hospital.controller.js
-        ├── hospital.service.js
-        ├── hospital.repository.js
-        ├── hospital.validator.js
-        └── hospital.test.js
+    └── police/
+        ├── police.routes.js
+        ├── police.controller.js
+        ├── police.service.js
+        ├── police.repository.js
+        ├── police.validator.js
+        └── police.test.js
 ```
 
 ---
@@ -91,7 +92,7 @@ FRONTEND_URL=
 ```
 
 `src/config/env.js` must validate all required vars at startup and call `process.exit(1)` if any are missing.
-Frontend must use `VITE_API_BASE_URL` and `VITE_AUTH_TOKEN_KEY` — never hardcode URLs or keys.
+Frontend must use `VITE_API_BASE_URL` (or `NEXT_PUBLIC_API_URL`) and `VITE_AUTH_TOKEN_KEY` (or `NEXT_PUBLIC_AUTH_TOKEN_KEY`) — never hardcode URLs or keys.
 
 ---
 
@@ -99,16 +100,19 @@ Frontend must use `VITE_API_BASE_URL` and `VITE_AUTH_TOKEN_KEY` — never hardco
 
 | Method | Route | Description |
 |---|---|---|
-| GET | `/api/hospitals` | List all active hospitals |
-| GET | `/api/hospitals/:id` | Get hospital by ID |
-| POST | `/api/hospitals` | Register hospital |
-| PUT | `/api/hospitals/:id` | Update hospital |
-| PATCH | `/api/hospitals/:id/status` | Toggle is_active |
-| DELETE | `/api/hospitals/:id` | Soft delete (is_active = false) |
-| POST | `/api/hospitals/dispatch` | Dispatch hospital to incident |
-| GET | `/api/hospitals/dispatch/:incident_id` | Get dispatch for incident |
-| PATCH | `/api/hospitals/dispatch/:dispatch_id/status` | Update dispatch status |
-| GET | `/api/hospitals/:hospital_id/dispatches` | All dispatches for hospital |
+| GET | `/api/police` | List all active police stations |
+| GET | `/api/police/:id` | Get station by ID |
+| POST | `/api/police` | Register police station |
+| PUT | `/api/police/:id` | Update station details |
+| PATCH | `/api/police/:id/status` | Toggle is_active |
+| DELETE | `/api/police/:id` | Soft delete (is_active = false) |
+| POST | `/api/police/dispatch` | Dispatch station to incident |
+| GET | `/api/police/dispatch/:incident_id` | Get dispatch for incident |
+| PATCH | `/api/police/dispatch/:dispatch_id/status` | Update dispatch status |
+| GET | `/api/police/:station_id/dispatches` | All dispatches for station |
+
+> **Bonus endpoint (required for Active Incidents page):**
+> `GET /api/police/incidents/active` — Returns all incidents where `is_active = true`. Requires auth token.
 
 ---
 
@@ -116,14 +120,23 @@ Frontend must use `VITE_API_BASE_URL` and `VITE_AUTH_TOKEN_KEY` — never hardco
 
 **Creating a dispatch:**
 1. Verify incident exists and `is_active = true`
-2. Verify hospital exists and `is_active = true`
-3. Reject duplicate Hospital dispatch for same incident → `409`
-4. Insert with `responder_type = 'Hospital'`, `station_id = NULL`
+2. Verify police station exists and `is_active = true`
+3. Reject duplicate Police dispatch for the same incident → `409 Conflict`
+4. Insert with `responder_type = 'Police'`, `hospital_id = NULL`, `station_id = <id>`
 
 **Updating dispatch status:**
 - Only allow: `Pending → En Route → Resolved`
 - On `Resolved`: set `incidents.is_active = false` (**no `resolved_at` — column does not exist**)
-- Any backward/invalid transition → `422 Unprocessable Entity`
+- Any backward or invalid transition → `422 Unprocessable Entity`
+
+**Valid transitions map (enforce in service layer):**
+```js
+const VALID_TRANSITIONS = {
+  'Pending':  'En Route',
+  'En Route': 'Resolved',
+};
+// If VALID_TRANSITIONS[currentStatus] !== newStatus → reject with 422
+```
 
 ---
 
@@ -147,277 +160,263 @@ Frontend must use `VITE_API_BASE_URL` and `VITE_AUTH_TOKEN_KEY` — never hardco
 
 ---
 
-## Frontend Fixes Required
+## Safe Column Selection
 
-Check and fix every Hospital-related frontend file for:
+Never return `password_hash` in any API response.
 
-- API base URL read from `import.meta.env.VITE_API_BASE_URL` (never hardcoded)
-- `Content-Type: application/json` on all POST/PUT/PATCH
-- Auth token attached via `localStorage.getItem(import.meta.env.VITE_AUTH_TOKEN_KEY)`
-- Response read as `response.data`, guarded against null/undefined
-- `success: false` shows visible error message to user
-- Loading state shown during calls, reset in `finally`
-- Data re-fetched after every successful mutation
-- `401` response redirects to login
-
----
-
-## Known Bugs to Fix (Active Incidents Page)
-
-These specific bugs were found in `ActiveIncidentsPage` and **must** be fixed.
-
-### Bug 1 — Hardcoded Fallback URL 🔴
-Remove `|| "http://localhost:5001"`. Replace with:
-```ts
-const API_URL = process.env.NEXT_PUBLIC_API_URL
-if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
-```
-
-### Bug 2 — Missing Backend Endpoint 🔴
-The frontend calls `GET /api/hospitals/incidents/active` which is **not in the required API spec**.
-Add this endpoint to the backend:
-- Returns all incidents where `is_active = true`
-- Requires auth token
-- Returns `{ success: true, data: Incident[] }`
-
-### Bug 3 — Status Update Checks `.ok` Instead of `data.success`
-Parse the response body and check `data.success` instead of just `.ok`:
-```ts
-const d1 = await p1.json()
-if (!d1.success) throw new Error(d1.message || "Failed to update to En Route")
-const d2 = await p2.json()
-if (!d2.success) throw new Error(d2.message || "Failed to resolve")
-```
-
-### Bug 4 — `dispatch.incidents` Always `undefined` Without JOIN
-`GET /api/hospitals/:hospital_id/dispatches` must JOIN `incidents` so location data is returned.
-The repository query must be:
-```sql
-SELECT d.*, i.latitude, i.longitude, i.detected_at, i.is_active
-FROM incident_dispatch d
-JOIN incidents i ON i.incident_id = d.incident_id
-WHERE d.hospital_id = $1
-```
-Without this JOIN, every dispatch card shows **"Unknown Location"**.
-
-### Bug 5 — Auth Token Key May Be Hardcoded in `auth-provider`
-Verify the localStorage key in `auth-provider` comes from an env variable, not hardcoded as `"token"` or `"authToken"`. Both login (write) and every API call (read) must use the same env variable key.
-
-### Bug 6 — No `401` Redirect to Login
-After every fetch call, check for `401` and redirect:
-```ts
-if (res.status === 401) { router.push("/login"); return }
-```
-
----
-
-## Known Bugs to Fix (Backend — hospital.routes.js, hospital.repository.js, hospital.controller.js)
-
-### Bug B1 — Route Order: `GET /:id` Shadows `GET /:hospital_id/dispatches` 🔴
-**File:** `hospital.routes.js`
-`GET /:id` is registered before `GET /:hospital_id/dispatches`, so `/123/dispatches` is caught by `/:id` and the dispatches route never fires. Move dispatches route above `GET /:id`:
+Define a constant in the repository:
 ```js
-router.get('/:hospital_id/dispatches', validator.validateHospitalIdParam, controller.getDispatchesByHospital);
-router.get('/:id', validator.validateHospitalId, controller.getHospitalById); // must come after
+const SAFE_STATION_COLUMNS = [
+  'station_id', 'station_name', 'address', 'city',
+  'phone', 'email', 'is_active'
+];
+```
+Use this in all SELECT queries for `police_stations`.
+
+---
+
+## Repository Patterns (Supabase JS Client)
+
+### Get all active stations
+```js
+const { data, error } = await supabase
+  .from('police_stations')
+  .select(SAFE_STATION_COLUMNS.join(', '))
+  .eq('is_active', true);
 ```
 
-### Bug B2 — `req.params.id` Passed as String, Not Integer 🔴
-**File:** `hospital.controller.js`
+### Get dispatches for a station (JOIN incidents)
+```js
+const { data, error } = await supabase
+  .from('incident_dispatch')
+  .select(`
+    *,
+    incidents (
+      incident_id,
+      latitude,
+      longitude,
+      detected_at,
+      is_active
+    )
+  `)
+  .eq('station_id', stationId)
+  .eq('responder_type', 'Police');
+```
+> Without this JOIN, every dispatch card will show **"Unknown Location"**. Always include it.
+
+### Create dispatch
+```js
+const { data, error } = await supabase
+  .from('incident_dispatch')
+  .insert({
+    incident_id: incidentId,
+    responder_type: 'Police',
+    station_id: stationId,
+    hospital_id: null,
+    dispatch_status: 'Pending',
+    dispatched_at: new Date().toISOString(),
+  })
+  .select()
+  .single();
+```
+
+### Resolve incident (no resolved_at column)
+```js
+// When dispatch status becomes 'Resolved':
+const { error } = await supabase
+  .from('incidents')
+  .update({ is_active: false })
+  .eq('incident_id', incidentId);
+// DO NOT reference resolved_at — column does not exist
+```
+
+---
+
+## Known Bugs to Pre-empt (Implement Correctly From the Start)
+
+These are the same class of bugs found in the hospital module. Do not repeat them.
+
+### Route Order: `GET /:id` Must NOT Shadow `GET /:station_id/dispatches` 🔴
+Register the dispatches route BEFORE the generic `/:id` route:
+```js
+router.get('/incidents/active',   authMiddleware, controller.getActiveIncidents);
+router.get('/:station_id/dispatches', validate.stationIdParam, controller.getDispatchesByStation);
+router.get('/:id',                validate.stationId,      controller.getStationById); // must be last
+```
+If `/:id` is registered first, Express will catch `/123/dispatches` as `id = "123"` and the dispatches route will never fire.
+
+### Parse All `req.params` as Integers 🔴
 `req.params` values are always strings. Pass them as integers to the service:
 ```js
-await service.getHospitalById(parseInt(req.params.id, 10))
-await service.updateHospital(parseInt(req.params.id, 10), req.body)
-await service.toggleHospitalStatus(parseInt(req.params.id, 10))
-await service.deleteHospital(parseInt(req.params.id, 10))
-await service.getDispatchesByHospital(parseInt(req.params.hospital_id, 10))
+parseInt(req.params.id, 10)
+parseInt(req.params.station_id, 10)
+parseInt(req.params.incident_id, 10)
+parseInt(req.params.dispatch_id, 10)
 ```
 
-### Bug B3 — `create()` Accepts Unused `password` Parameter 🟡
-**File:** `hospital.repository.js`
-The `create()` function destructures a `password` param that is never sent by the frontend or validated. Remove it and hardcode `'temp_password'` directly:
+### `create()` Must Not Accept or Silently Ignore `password` 🟡
+The `police_stations` table stores `password_hash = 'temp_password'` by default. The frontend sends a `password` field for Supabase Auth (step 2). The repository `create()` function must NOT destructure or store the raw `password` field:
 ```js
-const create = async ({ hospital_name, address, city, phone, email, bed_capacity }) => {
-  // ... insert with password_hash: 'temp_password'
-}
+const create = async ({ station_name, address, city, phone, email }) => {
+  // password_hash defaults to 'temp_password' in the DB schema
+  // actual password is handled by Supabase Auth in step 2
+};
+```
+
+### `password_hash` Must Never Be Returned in Responses 🔴
+All `SELECT` queries on `police_stations` must exclude `password_hash`. Use `SAFE_STATION_COLUMNS`.
+
+### Duplicate Dispatch Check Must Filter by `responder_type = 'Police'` 🔴
+The `incident_dispatch` table is shared between Hospital and Police. When checking for duplicates, always scope the check to `responder_type = 'Police'`:
+```js
+const { data } = await supabase
+  .from('incident_dispatch')
+  .select('dispatch_id')
+  .eq('incident_id', incidentId)
+  .eq('responder_type', 'Police')
+  .single();
+if (data) throw { status: 409, message: 'Police already dispatched to this incident' };
 ```
 
 ---
 
-## Known Bugs to Fix (Frontend Components)
+## Frontend Integration Requirements
 
-### Bug F1 — Hardcoded localStorage Keys in `auth-provider.tsx` 🔴
-All 6 localStorage calls use hardcoded string keys `"token"` and `"hospital"`. Both must come from env variables:
-```ts
-const TOKEN_KEY = process.env.NEXT_PUBLIC_AUTH_TOKEN_KEY!
-const HOSPITAL_KEY = process.env.NEXT_PUBLIC_HOSPITAL_KEY!
-// Replace all: localStorage.getItem("token") → localStorage.getItem(TOKEN_KEY)
-// Replace all: localStorage.setItem("token", ...) → localStorage.setItem(TOKEN_KEY, ...)
-// Same for "hospital" → HOSPITAL_KEY
-```
-
-### Bug F2 — Hardcoded Fallback URLs in 3 Files 🔴
-**Files:** `header.tsx` (line 7), `hospital-login-form.tsx` (line 11), `sidebar.tsx` (lines 24–27, twice inline)
-All use `|| "http://localhost:5001"`. Remove every fallback:
-```ts
-// ❌ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:5001"
-// ✅ const API_URL = process.env.NEXT_PUBLIC_API_URL
-//    if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
-```
-
-### Bug F3 — No `401` Redirect in `page.tsx`, `header.tsx`, `sidebar.tsx` 🔴
-None of these files check for `401` responses. After every fetch, add:
-```ts
-if (res.status === 401) { router.push("/login"); return }
-```
-
-### Bug F4 — `handleResolve` Checks `.ok` Instead of `data.success` in `page.tsx` 🔴
-Already documented as Bug 3 above — applies specifically to `page.tsx` `handleResolve` function.
-
-### Bug F5 — Silent `catch` Block in `sidebar.tsx` 🟡
-```ts
-} catch (e) {}  // swallows all errors silently
-```
-At minimum log the error in dev and handle `401` explicitly.
-
-### Bug F6 — `hospital_id` Can Be `undefined` in `header.tsx` Dispatch Body 🟡
-`hospital?.hospital_id` can be `undefined` if session is lost. Add guard before the fetch:
-```ts
-if (!hospital?.hospital_id) {
-  setError("Hospital session not found. Please log in again.")
-  return
-}
-```
-
-### Bug F7 — No Guard for Missing `session` Object in `hospital-login-form.tsx` 🟡
-```ts
-// ❌ Crashes if data.data.session is undefined
-login(data.data.session.access_token, ...)
-
-// ✅ Fix
-if (!data.data?.session?.access_token) {
-  setError("Login failed: invalid server response")
-  return
-}
-```
-
-### Bug F8 — `Status` Type in `active-incident-card.tsx` Includes Dead Values 🟡
-`"In Progress"` and `"Dispatched"` are in the `Status` type but the backend never sends them. Tighten to match backend reality:
-```ts
-type Status = "Pending" | "En Route" | "Resolved"
-```
-
-### Bug F9 — `dispatchesData.data` Accessed Without Null Check in `page.tsx` 🟡
-Inside `if (incidentsData.success)`, `dispatchesData.data` is used without checking `dispatchesData.success` first — causes crash if dispatches call failed:
-```ts
-const dispatchedIncidentIds = new Set(
-  (dispatchesData.success ? (dispatchesData.data as Dispatch[]) : []).map((d) => d.incident_id)
-)
-```
-
-
----
-
-## Known Bugs to Fix (Page-Level Frontend Files)
-
-### Bug P1 — Hardcoded Fallback URLs in 6 Page Files 🔴
-Every page that makes API calls uses `|| "http://localhost:5001"`. Remove the fallback from ALL of these files:
-- `settings/page.tsx` (inside `handleChangePassword` function)
-- `active-incidents/page.tsx` (line 9)
-- `ambulance-fleet/page.tsx` (line 9)
-- `dashboard/page.tsx` (line 10)
-- `register/page.tsx` (line 9)
-- `incident-history/page.tsx` (line 7)
-
-Replace every occurrence with:
+### Environment Variables (never hardcode)
 ```ts
 const API_URL = process.env.NEXT_PUBLIC_API_URL
 if (!API_URL) throw new Error("NEXT_PUBLIC_API_URL is not set")
+
+const TOKEN_KEY  = process.env.NEXT_PUBLIC_AUTH_TOKEN_KEY!
+const STATION_KEY = process.env.NEXT_PUBLIC_STATION_KEY!
 ```
 
-### Bug P2 — `handleResolve` in `dashboard/page.tsx` Checks `.ok` Instead of `data.success` 🔴
-Same as Bug F4 — also present in the dashboard page:
+### Auth Token on Every Protected Request
 ```ts
-// ❌
-if (!p1.ok) throw new Error("Failed to update status to En Route")
-if (!p2.ok) throw new Error("Failed to update status to Resolved")
-
-// ✅ Fix
-const d1 = await p1.json()
-if (!d1.success) throw new Error(d1.message || "Failed to update to En Route")
-const d2 = await p2.json()
-if (!d2.success) throw new Error(d2.message || "Failed to resolve")
+const token = localStorage.getItem(TOKEN_KEY)
+headers: {
+  'Content-Type': 'application/json',
+  'Authorization': `Bearer ${token}`,
+}
 ```
 
-### Bug P3 — No `401` Redirect in `settings`, `dashboard`, `ambulance-fleet`, `incident-history` 🔴
-None of these pages redirect to login on `401`. All fetch calls need:
+### 401 Redirect on Every Fetch
 ```ts
 if (res.status === 401) { router.push("/login"); return }
 ```
-`settings/page.tsx` does not import `useRouter` at all — it must be added before this fix can be applied.
 
-### Bug P4 — `register/page.tsx` Sends `password` But Backend Always Stores `'temp_password'` 🔴
-The registration form sends `password: form.password` to `POST /api/hospitals`, but `hospital.repository.js` `create()` ignores the `password` field and always stores `password_hash = 'temp_password'`. This means:
-1. The hospital record has `password_hash = 'temp_password'`
-2. Step 2 calls `POST /api/auth/register` with the real password
-3. Supabase auth has the real password; the hospitals table has `'temp_password'`
-4. Login via `hospital.email` will use Supabase auth (works), but `change-password` endpoint that reads `hospitals.password_hash` will break
-
-**Fix required in both files:**
-- `hospital.repository.js` `create()`: accept and hash the password before storing
-- `register/page.tsx`: ensure the password is correctly passed through
-
-### Bug P5 — `register/page.tsx` No Rollback If Step 2 Fails After Step 1 Succeeds 🔴
-If hospital record is created (Step 1 succeeds) but Supabase auth registration fails (Step 2 fails), the hospital row exists in the DB with no auth account. The user cannot log in and cannot re-register (duplicate email). There is no cleanup call.
-**Fix:** Either use a backend transaction endpoint that does both steps atomically, or add a DELETE call to remove the hospital record if Step 2 fails.
-
-### Bug P6 — `ambulance-fleet/page.tsx` Silent `catch` — No Error Shown to User 🟡
+### Check `data.success`, Not Just `res.ok`
 ```ts
-} catch {
-  setFleet([])  // user sees empty fleet with no explanation
-}
-```
-Add an error state and display a message:
-```ts
-} catch {
-  setFleet([])
-  setError("Failed to load fleet data. Please try again.")
-}
+// ❌ Wrong
+if (!res.ok) throw new Error("Failed")
+
+// ✅ Correct
+const data = await res.json()
+if (!data.success) throw new Error(data.message || "Request failed")
 ```
 
-### Bug P7 — `dashboard/page.tsx` No Loading State on `handleResolve` 🟡
-The Resolve button in the dashboard has no `isResolving` state — it stays clickable during the API call. Double-clicking can submit duplicate status update requests, potentially causing a `422` invalid transition error. Add an `isResolving` flag and disable the button while the call is in progress.
+### Status Update Requires Two Sequential Calls if Current Status is `Pending`
+The backend enforces strict one-step transitions. To go from `Pending → Resolved`, two calls are required:
+1. `PATCH /dispatch/:id/status` with `{ dispatch_status: 'En Route' }`
+2. `PATCH /dispatch/:id/status` with `{ dispatch_status: 'Resolved' }`
 
-### Bug P8 — `register/page.tsx` `password` Field Not in Backend Validator 🟡
-`validateCreateHospital` in `hospital.validator.js` does not validate the `password` field. It is silently passed through and ignored. The validator must either include `password` validation (if the backend starts using it after Bug P4 is fixed), or the frontend should stop sending it until the backend supports it.
+Each must be awaited and its `data.success` verified before proceeding.
 
-### Bug P9 — `settings/page.tsx` Dark Mode Toggle Is Non-Functional 🟡
-The `darkMode` state toggles correctly in React but never applies a CSS class to `<html>` or `<body>`. The toggle does nothing visible.
-**Fix:** Apply the dark class on toggle:
-```ts
-onChange={() => {
-  setDarkMode(!darkMode)
-  document.documentElement.classList.toggle("dark", !darkMode)
-}}
+### Loading / Error / Success States
+- Every mutating action (dispatch, resolve, status update) must set `isLoading` / `isResolving` state
+- Disable submit/action buttons while `isLoading === true`
+- Reset state in `finally` block
+- Display `success: false` responses as visible error messages (never silent)
+- Re-fetch data after every successful mutation
+
+---
+
+## Auth Provider Requirements
+
+- `auth-provider.tsx` must read and write localStorage using env variable keys — never hardcoded strings like `"token"` or `"station"`
+- Both login (write) and all API calls (read) must use the same env variable key
+- On initial load, read session from localStorage
+- Guard all protected routes: if no token and route is not `/login` or `/register`, redirect to `/login`
+
+---
+
+## Registration Flow (2-Step)
+
+```
+Step 1: POST /api/police         → creates police_stations DB record
+Step 2: POST /api/auth/register  → creates Supabase Auth account with real password
 ```
 
-### Bug P10 — `profile/page.tsx` Static Fake Data Presented as Real Hospital Information 🟡
-The following values are hardcoded and fabricated — they are not from the database:
-- Establishment date: `"January 15, 1985"` (hardcoded)
-- Certifications: Joint Commission, Level 1 Trauma, Stroke Center, Cardiac Care (all fake)
-- Staff count: calculated as `beds * 2` (made up formula)
-- Department names and staff counts (all hardcoded)
+**Rollback rule:** If Step 2 fails after Step 1 succeeds, send `DELETE /api/police/:id` immediately to remove the orphaned station record. Without rollback, the email becomes permanently locked — user cannot log in and cannot re-register.
 
-These are displayed as factual hospital data. Either remove them or clearly mark them as placeholder/demo data.
+**Password handling:**
+- Step 1: Backend ignores the `password` field; DB stores `password_hash = 'temp_password'` by default
+- Step 2: Real password is registered with Supabase Auth
+- Login uses Supabase Auth (works); `change-password` endpoint must use Supabase Admin API (not `password_hash` in DB)
+
+---
+
+## Validator Requirements (`police.validator.js`)
+
+Use `express-validator`. Validate all fields before they reach the controller.
+
+### `validateCreateStation`
+| Field | Rule |
+|---|---|
+| `station_name` | required, string, non-empty |
+| `address` | required, string, non-empty |
+| `city` | required, string, non-empty |
+| `phone` | required, string, matches phone pattern |
+| `email` | required, valid email format |
+
+### `validateUpdateStation`
+Same fields as create, all optional (PATCH semantics).
+
+### `validateDispatch`
+| Field | Rule |
+|---|---|
+| `incident_id` | required, integer, > 0 |
+| `station_id` | required, integer, > 0 |
+
+### `validateStatusUpdate`
+| Field | Rule |
+|---|---|
+| `dispatch_status` | required, one of: `'En Route'`, `'Resolved'` |
+
+### `validateStationIdParam` / `validateIncidentIdParam` / `validateDispatchIdParam`
+All route params must be validated as positive integers.
+
+---
+
+## Test File Requirements (`police.test.js`)
+
+Cover at minimum:
+
+| Test | Expected |
+|---|---|
+| `GET /api/police` | 200, returns array |
+| `POST /api/police` with valid data | 201, station created |
+| `POST /api/police` with missing fields | 400 |
+| `GET /api/police/:id` with valid ID | 200, station returned |
+| `GET /api/police/:id` with invalid ID | 404 |
+| `POST /api/police/dispatch` valid | 201, dispatch created |
+| `POST /api/police/dispatch` duplicate | 409 |
+| `POST /api/police/dispatch` inactive incident | 400/404 |
+| `PATCH /dispatch/:id/status` valid transition | 200 |
+| `PATCH /dispatch/:id/status` invalid transition | 422 |
+| `GET /api/police/incidents/active` | 200, active incidents only |
+| `GET /api/police/:station_id/dispatches` | 200, includes lat/lng from JOIN |
 
 ---
 
 ## Out of Scope — Do Not Touch
 
-- `src/modules/police/` — hands off
+- `src/modules/hospital/` — hands off
 - `src/modules/admin/` — hands off
 - `src/modules/auth/` — do not modify
-- Any frontend page unrelated to Hospital
+- Any frontend page unrelated to Police
 - Database schema — no ALTER TABLE, no migrations
+- `responder_type = 'Hospital'` records — never modify or return them from police endpoints
 
 ---
 
@@ -425,36 +424,27 @@ These are displayed as factual hospital data. Either remove them or clearly mark
 
 - [ ] Schema verified — no missing or mismatched columns
 - [ ] All 10 endpoints implemented, no stubs
+- [ ] `GET /api/police/incidents/active` endpoint added
 - [ ] `resolved_at` never referenced anywhere (column does not exist)
-- [ ] Dispatch logic enforces one-way status transitions
+- [ ] Dispatch logic enforces `responder_type = 'Police'` on insert and duplicate check
+- [ ] Dispatch logic enforces one-way status transitions via `VALID_TRANSITIONS` map
+- [ ] `Pending → Resolved` direct jump rejected with `422`
 - [ ] All responses use standard `{ success, message, data }` shape
+- [ ] `password_hash` excluded from all API responses via `SAFE_STATION_COLUMNS`
+- [ ] `GET /api/police/:station_id/dispatches` JOINs `incidents` table — `latitude`, `longitude`, `detected_at`, `is_active` included
+- [ ] `GET /:station_id/dispatches` route registered BEFORE `GET /:id` in routes file
+- [ ] `GET /incidents/active` route registered BEFORE `GET /:id` in routes file
+- [ ] All `req.params` values parsed with `parseInt()` in controller
+- [ ] `create()` in repository does not accept or store raw `password`
+- [ ] `hospital_id` is always `NULL` on police dispatch inserts
 - [ ] Frontend reads all config from env vars — zero hardcoded values
-- [ ] Loading, error, and success UI states all work correctly
-- [ ] All tests pass
-- [ ] Zero browser console errors on Hospital pages
-- [ ] `GET /api/hospitals/incidents/active` added to backend
-- [ ] `GET /api/hospitals/:hospital_id/dispatches` JOINs `incidents` table
-- [ ] Status update responses checked via `data.success`, not just `.ok`
-- [ ] Zero hardcoded fallback URLs — no `|| "http://localhost:..."` anywhere
+- [ ] No `|| "http://localhost:..."` fallback URLs anywhere in frontend
 - [ ] Auth token key sourced from env variable in `auth-provider` (read and write)
+- [ ] All fetch calls check `data.success`, not just `res.ok`
 - [ ] All fetch calls handle `401` with redirect to login
-- [ ] `GET /:hospital_id/dispatches` route registered BEFORE `GET /:id` in routes.js
-- [ ] All `req.params.id` values parsed with `parseInt()` in controller
-- [ ] `create()` in repository does not accept or destructure `password` param
-- [ ] `auth-provider.tsx` localStorage keys read from env variables — not hardcoded strings
-- [ ] No `|| "http://localhost:..."` fallback in header.tsx, hospital-login-form.tsx, sidebar.tsx
-- [ ] `sidebar.tsx` catch block handles errors and 401, not silently swallowed
-- [ ] `header.tsx` guards against undefined `hospital_id` before dispatch fetch
-- [ ] `hospital-login-form.tsx` guards against missing `data.data.session` before calling login()
-- [ ] `active-incident-card.tsx` Status type only includes: Pending, En Route, Resolved
-- [ ] `page.tsx` checks `dispatchesData.success` before accessing `dispatchesData.data`
-- [ ] Hardcoded fallback URLs removed from all 6 page files (settings, active-incidents, ambulance-fleet, dashboard, register, incident-history)
-- [ ] `dashboard/page.tsx` handleResolve checks `data.success`, not `.ok`
-- [ ] `settings`, `dashboard`, `ambulance-fleet`, `incident-history` all handle `401` with redirect; `settings/page.tsx` imports `useRouter`
-- [ ] Registration password flow fixed — backend stores actual password hash, not `'temp_password'`
-- [ ] Registration Step 2 failure rolls back Step 1 hospital record
-- [ ] `ambulance-fleet/page.tsx` catch block shows error to user
-- [ ] `dashboard/page.tsx` Resolve button disabled while resolving (isResolving state)
-- [ ] `register/page.tsx` password field validated by backend validator
-- [ ] `settings/page.tsx` dark mode toggle applies `dark` class to `<html>`
-- [ ] `profile/page.tsx` fake/static data is removed or clearly marked as placeholder
+- [ ] Loading / isResolving states implemented — action buttons disabled during calls
+- [ ] Data re-fetched after every successful mutation
+- [ ] `success: false` shows visible error message to user
+- [ ] Registration Step 2 failure rolls back Step 1 station record via DELETE
+- [ ] All test cases in `police.test.js` pass
+- [ ] Zero browser console errors on Police pages
