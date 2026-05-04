@@ -1,79 +1,75 @@
+"use client"
+
+import { useEffect, useState } from "react"
 import { Sidebar } from "../../../../components/dashboard/sidebar"
 import { Header } from "../../../../components/dashboard/header"
 import { IncidentRow } from "../../../../components/dashboard/incident-row"
+import { useAuth } from "../../../../components/auth/auth-provider"
+import { formatDistanceToNow } from "date-fns"
 
-const incidents = [
-  {
-    priority: "CRITICAL" as const,
-    title: "Armed Robbery in Progress",
-    location: "E 27TH ST, 1st-10th - NY",
-    timeAgo: "3 min ago",
-    unit: "UNIT-301",
-    status: "Active" as const,
-  },
-  {
-    priority: "CRITICAL" as const,
-    title: "Officer Down - Backup Needed",
-    location: "Downtown Plaza",
-    timeAgo: "5 min ago",
-    unit: "UNIT-215",
-    status: "Active" as const,
-  },
-  {
-    priority: "HIGH" as const,
-    title: "Domestic Disturbance",
-    location: "W Main Avenue, Apt 4B",
-    timeAgo: "8 min ago",
-    unit: "UNIT-442",
-    status: "En Route" as const,
-  },
-  {
-    priority: "HIGH" as const,
-    title: "Hit and Run Accident",
-    location: "Highway 101 North",
-    timeAgo: "12 min ago",
-    unit: "UNIT-158",
-    status: "Investigating" as const,
-  },
-  {
-    priority: "MEDIUM" as const,
-    title: "Suspicious Vehicle",
-    location: "W 6TH ST, 3rd-20th",
-    timeAgo: "15 min ago",
-    unit: "UNIT-529",
-    status: "Investigating" as const,
-  },
-  {
-    priority: "MEDIUM" as const,
-    title: "Noise Complaint",
-    location: "Riverside Apartments",
-    timeAgo: "18 min ago",
-    unit: "UNIT-673",
-    status: "En Route" as const,
-  },
-  {
-    priority: "LOW" as const,
-    title: "Lost Child Report",
-    location: "Central Park",
-    timeAgo: "22 min ago",
-    unit: "UNIT-401",
-    status: "Resolved" as const,
-  },
-  {
-    priority: "LOW" as const,
-    title: "Parking Violation",
-    location: "Main Street",
-    timeAgo: "25 min ago",
-    unit: "UNIT-502",
-    status: "Active" as const,
-  },
-]
+const API_URL = process.env.NEXT_PUBLIC_API_URL
+
+interface Incident {
+  incident_id: number
+  latitude: number
+  longitude: number
+  is_active: boolean
+  detected_at: string
+}
 
 export default function ActiveIncidentsPage() {
-  const criticalCount = incidents.filter((i) => i.priority === "CRITICAL").length
-  const highCount = incidents.filter((i) => i.priority === "HIGH").length
-  const mediumCount = incidents.filter((i) => i.priority === "MEDIUM").length
-  const lowCount = incidents.filter((i) => i.priority === "LOW").length
+  const { station, token } = useAuth()
+  const [incidents, setIncidents] = useState<Incident[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [actionLoading, setActionLoading] = useState<number | null>(null)
+
+  const fetchIncidents = async () => {
+    if (!token) return
+    setIsLoading(true)
+    try {
+      const res = await fetch(`${API_URL}/api/police/incidents/active`, {
+        headers: { Authorization: `Bearer ${token}` }
+      })
+      const data = await res.json()
+      if (data.success) setIncidents(data.data || [])
+    } catch (err) {
+      console.error("Failed to fetch active incidents", err)
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    fetchIncidents()
+    const interval = setInterval(fetchIncidents, 10000)
+    return () => clearInterval(interval)
+  }, [token])
+
+  const handleDispatch = async (incidentId: number) => {
+    if (!token || !station) return
+    setActionLoading(incidentId)
+    try {
+      const res = await fetch(`${API_URL}/api/police/dispatch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          incident_id: incidentId,
+          station_id: station.station_id,
+        })
+      })
+      const data = await res.json()
+      if (data.success) {
+        alert("Unit successfully dispatched!")
+      } else {
+        alert(data.message || "Failed to dispatch")
+      }
+    } finally {
+      setActionLoading(null)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -83,27 +79,28 @@ export default function ActiveIncidentsPage() {
         <main className="p-6">
           {/* Page Header */}
           <div className="flex items-center justify-between mb-6">
-            <h1 className="text-xl font-bold text-gray-900">All Active Incidents</h1>
+            <h1 className="text-xl font-bold text-gray-900">Active Network Incidents</h1>
             <div className="flex items-center gap-2">
               <span className="px-3 py-1 text-xs font-medium bg-red-100 text-red-600 rounded-full">
-                {criticalCount} Critical
-              </span>
-              <span className="px-3 py-1 text-xs font-medium bg-orange-100 text-orange-600 rounded-full">
-                {highCount} High
-              </span>
-              <span className="px-3 py-1 text-xs font-medium bg-yellow-100 text-yellow-700 rounded-full">
-                {mediumCount} Medium
-              </span>
-              <span className="px-3 py-1 text-xs font-medium bg-green-100 text-green-600 rounded-full">
-                {lowCount} Low
+                {incidents.length} Total Active
               </span>
             </div>
           </div>
 
           {/* Incidents List */}
           <div className="space-y-3">
-            {incidents.map((incident, index) => (
-              <IncidentRow key={index} {...incident} />
+            {isLoading && incidents.length === 0 && <p className="text-gray-500">Loading incidents...</p>}
+            {!isLoading && incidents.length === 0 && <p className="text-gray-500">No active incidents found.</p>}
+            {incidents.map((incident) => (
+              <IncidentRow 
+                key={incident.incident_id}
+                title={`Incident #${incident.incident_id}`}
+                location={`${incident.latitude.toFixed(4)}, ${incident.longitude.toFixed(4)}`}
+                timeAgo={formatDistanceToNow(new Date(incident.detected_at), { addSuffix: true })}
+                onAction={() => handleDispatch(incident.incident_id)}
+                actionLabel="Dispatch Unit"
+                isActionLoading={actionLoading === incident.incident_id}
+              />
             ))}
           </div>
         </main>

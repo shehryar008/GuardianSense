@@ -3,16 +3,14 @@
 import { useState } from "react"
 import { Sidebar } from "../../../../components/dashboard/sidebar"
 import { Header } from "../../../../components/dashboard/header"
+import { useAuth } from "../../../../components/auth/auth-provider"
 import {
   BellIcon,
   LockIcon,
-  PaletteIcon,
-  GlobeIcon,
-  VolumeIcon,
-  DatabaseIcon,
   SettingsIcon,
-  CheckCircleIcon,
 } from "../../../../components/shared/icons"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 const ToggleSwitch = ({ enabled, onChange }: { enabled: boolean; onChange: () => void }) => (
   <button
@@ -26,39 +24,67 @@ const ToggleSwitch = ({ enabled, onChange }: { enabled: boolean; onChange: () =>
 )
 
 export default function SettingsPage() {
+  const { station, token } = useAuth()
+
   const [notifications, setNotifications] = useState({
     emergencyAlerts: true,
-    caseUpdates: true,
-    unitDispatch: true,
-    systemMaintenance: false,
-    emailNotifications: true,
+    dispatchAlerts: true,
+    emailNotifications: false,
   })
 
-  const [security, setSecurity] = useState({
-    twoFactor: true,
-    sessionTimeout: true,
-  })
+  const [currentPassword, setCurrentPassword] = useState("")
+  const [newPassword, setNewPassword] = useState("")
+  const [confirmPassword, setConfirmPassword] = useState("")
+  const [pwError, setPwError] = useState("")
+  const [pwSuccess, setPwSuccess] = useState("")
+  const [isChangingPw, setIsChangingPw] = useState(false)
 
-  const [appearance, setAppearance] = useState({
-    compactMode: false,
-    animations: true,
-    highContrast: false,
-  })
+  const handlePasswordChange = async () => {
+    setPwError("")
+    setPwSuccess("")
 
-  const [device, setDevice] = useState({
-    soundEffects: true,
-    vibration: true,
-    autoRefresh: true,
-  })
+    if (!newPassword || !currentPassword) {
+      setPwError("Please fill in all password fields.")
+      return
+    }
+    if (newPassword.length < 6) {
+      setPwError("New password must be at least 6 characters.")
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      setPwError("New passwords do not match.")
+      return
+    }
 
-  const [selectedColor, setSelectedColor] = useState("blue")
-  const colorOptions = [
-    { id: "blue", color: "bg-blue-600" },
-    { id: "darkblue", color: "bg-blue-900" },
-    { id: "purple", color: "bg-purple-600" },
-    { id: "pink", color: "bg-pink-500" },
-    { id: "green", color: "bg-green-600" },
-  ]
+    setIsChangingPw(true)
+    try {
+      const res = await fetch(`${API_URL}/api/auth/change-password`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          email: station?.email,
+          currentPassword,
+          newPassword,
+        }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setPwError(data.message || "Failed to change password.")
+        return
+      }
+      setPwSuccess("Password changed successfully!")
+      setCurrentPassword("")
+      setNewPassword("")
+      setConfirmPassword("")
+    } catch {
+      setPwError("Unable to connect to server.")
+    } finally {
+      setIsChangingPw(false)
+    }
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -68,291 +94,118 @@ export default function SettingsPage() {
         <main className="p-6 overflow-y-auto">
           {/* Header */}
           <div className="bg-white rounded-xl border border-gray-200 p-6 mb-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
-                  <SettingsIcon className="w-6 h-6 text-blue-600" />
-                </div>
-                <div>
-                  <h1 className="text-xl font-bold text-gray-900">System Settings</h1>
-                  <p className="text-sm text-gray-500">Manage your application preferences and system configurations</p>
-                </div>
+            <div className="flex items-center gap-4">
+              <div className="w-12 h-12 bg-blue-100 rounded-xl flex items-center justify-center">
+                <SettingsIcon className="w-6 h-6 text-blue-600" />
               </div>
-              <span className="flex items-center gap-2 px-3 py-1.5 bg-green-100 text-green-700 rounded-full text-sm">
-                <CheckCircleIcon className="w-4 h-4" />
-                All Systems Operational
-              </span>
+              <div>
+                <h1 className="text-xl font-bold text-gray-900">Settings</h1>
+                <p className="text-sm text-gray-500">Manage notifications and account security</p>
+              </div>
             </div>
           </div>
 
-          {/* Notification Preferences */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-            <div className="flex items-center gap-2 mb-4">
-              <BellIcon className="w-5 h-5 text-gray-600" />
-              <h2 className="font-semibold text-gray-900">Notification Preferences</h2>
-            </div>
-            <div className="space-y-4">
-              {[
-                {
-                  key: "emergencyAlerts",
-                  title: "Emergency Alerts",
-                  desc: "Receive notifications for critical incidents",
-                },
-                { key: "caseUpdates", title: "Case Updates", desc: "Get notified when assigned cases are updated" },
-                { key: "unitDispatch", title: "Unit Dispatch Alerts", desc: "Notifications when units are dispatched" },
-                {
-                  key: "systemMaintenance",
-                  title: "System Maintenance",
-                  desc: "Alerts for scheduled maintenance and updates",
-                },
-                {
-                  key: "emailNotifications",
-                  title: "Email Notifications",
-                  desc: "Receive email summaries of daily activities",
-                },
-              ].map((item) => (
-                <div key={item.key} className="flex items-center justify-between">
+          <div className="grid grid-cols-2 gap-6">
+            {/* Notification Preferences */}
+            <div className="bg-white rounded-xl border border-gray-200 p-5">
+              <div className="flex items-center gap-2 mb-4">
+                <BellIcon className="w-5 h-5 text-gray-600" />
+                <h2 className="font-semibold text-gray-900">Notification Preferences</h2>
+              </div>
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium text-gray-900">{item.title}</p>
-                    <p className="text-sm text-gray-500">{item.desc}</p>
+                    <p className="font-medium text-gray-900">Emergency Alerts</p>
+                    <p className="text-sm text-gray-500">Receive notifications for critical incidents</p>
                   </div>
                   <ToggleSwitch
-                    enabled={notifications[item.key as keyof typeof notifications]}
+                    enabled={notifications.emergencyAlerts}
                     onChange={() =>
-                      setNotifications({
-                        ...notifications,
-                        [item.key]: !notifications[item.key as keyof typeof notifications],
-                      })
+                      setNotifications({ ...notifications, emergencyAlerts: !notifications.emergencyAlerts })
                     }
                   />
                 </div>
-              ))}
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-gray-900">Dispatch Alerts</p>
+                    <p className="text-sm text-gray-500">Notifications when units are dispatched</p>
+                  </div>
+                  <ToggleSwitch
+                    enabled={notifications.dispatchAlerts}
+                    onChange={() =>
+                      setNotifications({ ...notifications, dispatchAlerts: !notifications.dispatchAlerts })
+                    }
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="font-medium text-gray-900">Email Notifications</p>
+                    <p className="text-sm text-gray-500">Receive email summaries of daily activities</p>
+                  </div>
+                  <ToggleSwitch
+                    enabled={notifications.emailNotifications}
+                    onChange={() =>
+                      setNotifications({ ...notifications, emailNotifications: !notifications.emailNotifications })
+                    }
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          {/* Security & Privacy and Appearance */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* Security & Privacy */}
+            {/* Change Password */}
             <div className="bg-white rounded-xl border border-gray-200 p-5">
               <div className="flex items-center gap-2 mb-4">
                 <LockIcon className="w-5 h-5 text-gray-600" />
-                <h2 className="font-semibold text-gray-900">Security & Privacy</h2>
+                <h2 className="font-semibold text-gray-900">Change Password</h2>
               </div>
-              <div className="space-y-4">
+
+              {pwError && (
+                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-sm text-red-600">{pwError}</div>
+              )}
+              {pwSuccess && (
+                <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-600">{pwSuccess}</div>
+              )}
+
+              <div className="space-y-3">
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Change Password</label>
+                  <label className="block text-sm text-gray-600 mb-1">Current Password</label>
                   <input
                     type="password"
-                    placeholder="Enter new password"
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm placeholder:text-gray-400"
                   />
                 </div>
                 <div>
-                  <label className="block text-sm text-gray-600 mb-1">Confirm Password</label>
+                  <label className="block text-sm text-gray-600 mb-1">New Password</label>
                   <input
                     type="password"
+                    value={newPassword}
+                    onChange={(e) => setNewPassword(e.target.value)}
+                    placeholder="Enter new password (min 6 chars)"
+                    className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm placeholder:text-gray-400"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm text-gray-600 mb-1">Confirm New Password</label>
+                  <input
+                    type="password"
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
                     placeholder="Confirm new password"
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm placeholder:text-gray-400"
                   />
                 </div>
-                <button className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-                  Update Password
+                <button
+                  onClick={handlePasswordChange}
+                  disabled={isChangingPw}
+                  className="w-full py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                >
+                  {isChangingPw ? "Updating..." : "Update Password"}
                 </button>
-                <div className="flex items-center justify-between pt-2">
-                  <div>
-                    <p className="font-medium text-gray-900">Two-Factor Authentication</p>
-                    <p className="text-sm text-gray-500">Add extra security to your account</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={security.twoFactor}
-                    onChange={() => setSecurity({ ...security, twoFactor: !security.twoFactor })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Session Timeout</p>
-                    <p className="text-sm text-gray-500">Auto-logout after inactivity</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={security.sessionTimeout}
-                    onChange={() => setSecurity({ ...security, sessionTimeout: !security.sessionTimeout })}
-                  />
-                </div>
               </div>
             </div>
-
-            {/* Appearance */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <PaletteIcon className="w-5 h-5 text-gray-600" />
-                <h2 className="font-semibold text-gray-900">Appearance</h2>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <label className="block text-sm text-gray-600 mb-1">Theme</label>
-                  <select className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900">
-                    <option>Light</option>
-                    <option>Dark</option>
-                    <option>System</option>
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-600 mb-2">Color Scheme</label>
-                  <div className="flex gap-2">
-                    {colorOptions.map((option) => (
-                      <button
-                        key={option.id}
-                        onClick={() => setSelectedColor(option.id)}
-                        className={`w-10 h-10 rounded-lg ${option.color} ${selectedColor === option.id ? "ring-2 ring-offset-2 ring-blue-600" : ""}`}
-                      />
-                    ))}
-                  </div>
-                </div>
-                <div className="flex items-center justify-between pt-2">
-                  <div>
-                    <p className="font-medium text-gray-900">Compact Mode</p>
-                    <p className="text-sm text-gray-500">Reduce spacing for more content</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={appearance.compactMode}
-                    onChange={() => setAppearance({ ...appearance, compactMode: !appearance.compactMode })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Animations</p>
-                    <p className="text-sm text-gray-500">Enable smooth transitions</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={appearance.animations}
-                    onChange={() => setAppearance({ ...appearance, animations: !appearance.animations })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">High Contrast</p>
-                    <p className="text-sm text-gray-500">Improve visibility</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={appearance.highContrast}
-                    onChange={() => setAppearance({ ...appearance, highContrast: !appearance.highContrast })}
-                  />
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Regional & Language Settings */}
-          <div className="bg-white rounded-xl border border-gray-200 p-5 mb-6">
-            <div className="flex items-center gap-2 mb-4">
-              <GlobeIcon className="w-5 h-5 text-gray-600" />
-              <h2 className="font-semibold text-gray-900">Regional & Language Settings</h2>
-            </div>
-            <div className="grid grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Language</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900">
-                  <option>English (US)</option>
-                  <option>Spanish</option>
-                  <option>French</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Time Zone</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900">
-                  <option>Eastern Time (ET)</option>
-                  <option>Central Time (CT)</option>
-                  <option>Pacific Time (PT)</option>
-                </select>
-              </div>
-              <div>
-                <label className="block text-sm text-gray-600 mb-1">Date Format</label>
-                <select className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm text-gray-900">
-                  <option>MM/DD/YYYY</option>
-                  <option>DD/MM/YYYY</option>
-                  <option>YYYY-MM-DD</option>
-                </select>
-              </div>
-            </div>
-          </div>
-
-          {/* Device Settings and Data & Storage */}
-          <div className="grid grid-cols-2 gap-6 mb-6">
-            {/* Device Settings */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <VolumeIcon className="w-5 h-5 text-gray-600" />
-                <h2 className="font-semibold text-gray-900">Device Settings</h2>
-              </div>
-              <div className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Sound Effects</p>
-                    <p className="text-sm text-gray-500">Play sounds for notifications</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={device.soundEffects}
-                    onChange={() => setDevice({ ...device, soundEffects: !device.soundEffects })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Vibration</p>
-                    <p className="text-sm text-gray-500">Haptic feedback on mobile devices</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={device.vibration}
-                    onChange={() => setDevice({ ...device, vibration: !device.vibration })}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="font-medium text-gray-900">Auto-Refresh</p>
-                    <p className="text-sm text-gray-500">Automatically update dashboard data</p>
-                  </div>
-                  <ToggleSwitch
-                    enabled={device.autoRefresh}
-                    onChange={() => setDevice({ ...device, autoRefresh: !device.autoRefresh })}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Data & Storage */}
-            <div className="bg-white rounded-xl border border-gray-200 p-5">
-              <div className="flex items-center gap-2 mb-4">
-                <DatabaseIcon className="w-5 h-5 text-gray-600" />
-                <h2 className="font-semibold text-gray-900">Data & Storage</h2>
-              </div>
-              <div className="space-y-4">
-                <div>
-                  <div className="flex justify-between text-sm mb-1">
-                    <span className="text-gray-600">Storage Used</span>
-                    <span className="text-gray-900">3.2 GB / 10 GB</span>
-                  </div>
-                  <div className="w-full h-2 bg-gray-200 rounded-full">
-                    <div className="w-1/3 h-2 bg-blue-600 rounded-full" />
-                  </div>
-                </div>
-                <button className="w-full py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-                  Clear Cache
-                </button>
-                <button className="w-full py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-                  Export All Data
-                </button>
-                <button className="w-full py-2 text-red-600 text-sm font-medium hover:underline">Delete Account</button>
-              </div>
-            </div>
-          </div>
-
-          {/* Footer Actions */}
-          <div className="flex justify-end gap-3">
-            <button className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg text-sm font-medium hover:bg-gray-50 transition-colors">
-              Reset to Defaults
-            </button>
-            <button className="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-              Save All Settings
-            </button>
           </div>
         </main>
       </div>

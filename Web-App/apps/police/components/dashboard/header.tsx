@@ -1,50 +1,187 @@
 "use client"
 
-import { SearchIcon, BellIcon, UserIcon } from "../shared/icons"
+import { useState } from "react"
+import { SearchIcon } from "../shared/icons"
+import { useAuth } from "../auth/auth-provider"
+import { useRouter } from "next/navigation"
+
+const API_URL = process.env.NEXT_PUBLIC_API_URL
 
 export function Header() {
+  const { station, token } = useAuth()
+  const router = useRouter()
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [incidentId, setIncidentId] = useState("")
+  const [isDispatching, setIsDispatching] = useState(false)
+  const [error, setError] = useState("")
+  const [success, setSuccess] = useState("")
+
+  const handleDispatch = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!incidentId.trim()) return
+
+    setError("")
+    setSuccess("")
+    setIsDispatching(true)
+
+    try {
+      if (!station?.station_id) {
+        setError("Station session not found. Please log in again.")
+        return
+      }
+
+      const res = await fetch(`${API_URL}/api/police/dispatch`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          incident_id: Number(incidentId),
+          station_id: station.station_id,
+        }),
+      })
+
+      if (res.status === 401) { router.push("/login"); return }
+
+      const data = await res.json()
+
+      if (data.success) {
+        setSuccess("Unit dispatched successfully!")
+        setIncidentId("")
+        setTimeout(() => {
+          setIsModalOpen(false)
+          setSuccess("")
+          window.location.reload()
+        }, 1500)
+      } else {
+        setError(data.message || "Failed to dispatch unit")
+      }
+    } catch {
+      setError("Network error occurred while dispatching")
+    } finally {
+      setIsDispatching(false)
+    }
+  }
+
   return (
-    <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
-      {/* Search */}
-      <div className="flex items-center gap-3 flex-1 max-w-xl">
-        <div className="relative flex-1">
-          <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
-          <input
-            type="text"
-            placeholder="Search incident, ambulance, staff..."
-            className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-          />
+    <>
+      <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6">
+        {/* Search */}
+        <div className="flex items-center gap-3 flex-1 max-w-xl">
+          <div className="relative flex-1">
+            <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+            <input
+              type="text"
+              placeholder="Search incidents, dispatches..."
+              className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm text-gray-900 placeholder:text-gray-500 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+          </div>
         </div>
-      </div>
 
-      {/* Actions */}
-      <div className="flex items-center gap-3">
-        <button className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors">
-          <span className="text-lg">+</span>
-          Manual Dispatch
-        </button>
+        {/* Actions */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setIsModalOpen(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors"
+          >
+            <span className="text-lg">+</span>
+            Manual Dispatch
+          </button>
 
-        <button className="flex items-center gap-2 px-4 py-2 border border-gray-200 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 transition-colors">
-          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <polyline points="7 10 12 15 17 10" />
-            <line x1="12" y1="15" x2="12" y2="3" />
-          </svg>
-          Export Data
-        </button>
-
-        <button className="relative p-2 text-gray-500 hover:text-gray-700 transition-colors">
-          <BellIcon className="w-5 h-5" />
-          <span className="absolute top-1 right-1 w-4 h-4 bg-red-500 text-white text-xs rounded-full flex items-center justify-center">
-            2
-          </span>
-        </button>
-
-        <div className="w-9 h-9 bg-blue-600 rounded-full flex items-center justify-center">
-          <UserIcon className="w-5 h-5 text-white" />
+          {/* Profile */}
+          <div className="flex items-center gap-3 pl-4 border-l border-gray-200">
+            <div className="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 font-bold">
+              {station?.station_name?.charAt(0) || "P"}
+            </div>
+            <div className="text-sm font-medium text-gray-700">
+              {station?.station_name || "Police Station"}
+            </div>
+          </div>
         </div>
-      </div>
-    </header>
+      </header>
+
+      {/* Manual Dispatch Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-2xl w-full max-w-md shadow-2xl border border-gray-100">
+            {/* Modal Header */}
+            <div className="flex justify-between items-center p-5 border-b border-gray-100">
+              <h2 className="text-xl font-bold text-gray-900">Manual Dispatch</h2>
+              <button
+                onClick={() => { setIsModalOpen(false); setError(""); setSuccess(""); }}
+                className="text-gray-400 hover:text-gray-600 transition-colors"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-6">
+              <p className="text-gray-500 text-sm mb-6">
+                Enter the Incident ID to manually dispatch a police unit from your station to the emergency location.
+              </p>
+
+              <form onSubmit={handleDispatch} className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">
+                    Incident ID <span className="text-red-500">*</span>
+                  </label>
+                  <input
+                    type="number"
+                    required
+                    value={incidentId}
+                    onChange={(e) => setIncidentId(e.target.value)}
+                    placeholder="e.g. 8"
+                    className="w-full px-4 py-2.5 bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900"
+                  />
+                </div>
+
+                {error && (
+                  <div className="p-3 bg-red-50 text-red-600 rounded-lg text-sm font-medium border border-red-100 flex items-start gap-2">
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{error}</span>
+                  </div>
+                )}
+
+                {success && (
+                  <div className="p-3 bg-green-50 text-green-600 rounded-lg text-sm font-medium border border-green-100 flex items-start gap-2">
+                    <svg className="w-5 h-5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <span>{success}</span>
+                  </div>
+                )}
+
+                <div className="flex justify-end gap-3 pt-4">
+                  <button
+                    type="button"
+                    onClick={() => { setIsModalOpen(false); setError(""); setSuccess(""); }}
+                    className="px-5 py-2.5 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors font-medium"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isDispatching || !incidentId}
+                    className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed font-medium flex items-center justify-center min-w-[120px] shadow-sm"
+                  >
+                    {isDispatching ? (
+                      <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                    ) : (
+                      "Dispatch Unit"
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   )
 }
-
