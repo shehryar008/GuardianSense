@@ -1,0 +1,42 @@
+{
+  "speed_gate_kmh": 5.0,
+  "seq_len": 15,
+  "n_features": 28,
+  "feature_names": [
+    "acc_mag",
+    "gyro_mag",
+    "jerk_mag",
+    "acc_energy",
+    "speed",
+    "speed_change",
+    "deceleration",
+    "acc_mag_std",
+    "gyro_mag_std",
+    "speed_acc_interaction",
+    "gyro_jerk",
+    "acc_peak_ratio",
+    "resultant_force",
+    "acc_skewness",
+    "angular_velocity_change",
+    "acc_gyro_corr",
+    "acc_mag_max_3",
+    "acc_mag_max_7",
+    "acc_mag_max_10",
+    "gyro_mag_max_3",
+    "gyro_mag_max_7",
+    "gyro_mag_max_10",
+    "cumulative_jerk",
+    "braking_intensity",
+    "impact_intensity",
+    "gyro_acc_product",
+    "speed_weighted_jerk",
+    "rotational_energy"
+  ],
+  "lstm_threshold": 0.8017329706045381,
+  "threshold_percentile": 99.5,
+  "notes": [
+    "Use linear acceleration (gravity-removed) on mobile",
+    "All features are orientation-invariant",
+    "Skip inference when speed < speed_gate_kmh"
+  ]
+}

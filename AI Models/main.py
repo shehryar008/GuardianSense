@@ -26,7 +26,7 @@ from sklearn.metrics import (
     precision_recall_curve,
     average_precision_score,
 )
-from sklearn.preprocessing import RobustScaler
+from sklearn.preprocessing import RobustScaler, StandardScaler
 from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
 from tensorflow.keras.layers import (
     LSTM,
@@ -73,16 +73,17 @@ os.makedirs(SAVE_DIR, exist_ok=True)
 RAW_SENSOR_COLS = ["speed", "accx", "accy", "accz", "gyrox", "gyroy", "gyroz"]
 GRAVITY = 9.81
 
-# ─── Hyperparameters (TUNED) ──────────────────────────────────────────────────
-SEQ_LEN = 10
-LSTM_EPOCHS = 100
+# ─── Hyperparameters (TUNED v3 — Orientation-Invariant) ───────────────────────
+SEQ_LEN = 15                    # Longer window captures full crash signature
+LSTM_EPOCHS = 150               # More epochs for better convergence
 LSTM_BATCH = 32
-LSTM_LR = 0.0005
-IF_CONTAMINATION = 0.03
-IF_ESTIMATORS = 200
-AUG_MULTIPLIER = 2              # Reduced: too much augmentation kills discriminative power
-SMOOTHING_WINDOW = 1
-THRESHOLD_PERCENTILE = 99       # Tighter threshold = fewer false positives
+LSTM_LR = 0.0003                # Lower LR for stable training
+IF_CONTAMINATION = 0.02         # Tighter = fewer false positives
+IF_ESTIMATORS = 300             # Stronger ensemble
+AUG_MULTIPLIER = 3              # More augmentation for robustness
+SMOOTHING_WINDOW = 3            # Temporal smoothing eliminates isolated FP spikes
+THRESHOLD_PERCENTILE = 99.5     # Very tight threshold
+SPEED_GATE_KMH = 5.0            # Min speed for accident detection (mobile app gate)
 
 sns.set_theme(style="whitegrid", font_scale=1.1)
 COLORS = {"normal": "#2ecc71", "crash": "#e74c3c", "threshold": "#f39c12"}
@@ -99,7 +100,7 @@ def load_csv(relative_path: str) -> pd.DataFrame:
 
 
 def load_all_datasets() -> Dict[str, pd.DataFrame]:
-    return {
+    datasets = {
         "controlled_test": load_csv(
             "dataset_controlled_test/data_set_controlled_test.csv"
         ),
@@ -120,6 +121,29 @@ def load_all_datasets() -> Dict[str, pd.DataFrame]:
         ),
     }
 
+    # ── Load the 8000-row IMU dataset with explicit crash labels ──────
+    imu_path = os.path.join(DATA_DIR, "road_accident_imu_dataset_8000.csv")
+    if os.path.exists(imu_path):
+        log.info("Loading road_accident_imu_dataset_8000.csv")
+        imu_df = pd.read_csv(imu_path)
+        # Rename columns to match existing convention
+        imu_df = imu_df.rename(columns={
+            "Acc_X": "accx", "Acc_Y": "accy", "Acc_Z": "accz",
+            "Gyro_X": "gyrox", "Gyro_Y": "gyroy", "Gyro_Z": "gyroz",
+            "Speed_kmh": "speed", "Crash_Label": "label",
+        })
+        log.info("  IMU dataset: %d rows, %d normal, %d crash",
+                 len(imu_df), (imu_df["label"] == 0).sum(), (imu_df["label"] == 1).sum())
+
+        # Split: normal rows for training augmentation, full set for evaluation
+        imu_normal = imu_df[imu_df["label"] == 0].copy().reset_index(drop=True)
+        datasets["imu_training"] = imu_normal       # 7000 normal rows
+        datasets["imu_labeled_test"] = imu_df.copy() # Full 8000 rows with labels
+    else:
+        log.warning("road_accident_imu_dataset_8000.csv not found — skipping")
+
+    return datasets
+
 
 # ==================== PREPROCESSING ====================
 
@@ -133,16 +157,23 @@ def ensure_sensor_columns(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def filter_valid_sensor_rows(
-    df: pd.DataFrame, has_type_record: bool = False, drop_type1: bool = True,
+    df: pd.DataFrame, has_type_record: bool = False, is_training: bool = False,
 ) -> pd.DataFrame:
+    """Filter rows. Only drop type_record!=0 for TRAINING data, not test data."""
     if df.empty:
         return df
     df = df.copy()
-    if has_type_record and "type_record" in df.columns and drop_type1:
+    # Only remove crash rows from training data (to keep it normal-only)
+    # For test data, KEEP crash rows so we can actually evaluate on them
+    if is_training and has_type_record and "type_record" in df.columns:
         df["type_record"] = pd.to_numeric(df["type_record"], errors="coerce").fillna(0)
         df = df[df["type_record"] == 0].copy()
     acc_gyro = ["accx", "accy", "accz", "gyrox", "gyroy", "gyroz"]
     if not all(c in df.columns for c in acc_gyro):
+        return df.reset_index(drop=True)
+    # For test data, be lenient — fill NaN sensors instead of dropping rows
+    if not is_training:
+        df[acc_gyro] = df[acc_gyro].ffill().bfill().fillna(0)
         return df.reset_index(drop=True)
     valid = df[acc_gyro].notna().any(axis=1)
     non_zero = df[acc_gyro].fillna(0).abs().sum(axis=1) > 0.01
@@ -179,10 +210,13 @@ def preprocess_sensors(df: pd.DataFrame) -> pd.DataFrame:
         if col in df.columns and len(df) > 10:
             df[col] = butterworth_lowpass(df[col])
 
-    if "accz" in df.columns:
-        df["accz_linear"] = remove_gravity_adaptive(df["accz"])
-    else:
-        df["accz_linear"] = 0.0
+    # Remove gravity from ALL axes — makes model orientation-invariant
+    # On mobile, this matches using userAccelerometerEvents (linear acceleration)
+    for axis in ["accx", "accy", "accz"]:
+        if axis in df.columns:
+            df[f"{axis}_linear"] = remove_gravity_adaptive(df[axis])
+        else:
+            df[f"{axis}_linear"] = 0.0
     return df
 
 
@@ -192,10 +226,15 @@ def add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
     df = df.copy()
-    accz_col = "accz_linear" if "accz_linear" in df.columns else "accz"
 
-    # ── Original Features ─────────────────────────────────────────────────
-    df["acc_mag"] = np.sqrt(df["accx"]**2 + df["accy"]**2 + df[accz_col].fillna(0)**2)
+    # Use gravity-removed (linear) acceleration for ALL axes
+    # This makes the model orientation-invariant — works regardless of phone position
+    accx = df["accx_linear"] if "accx_linear" in df.columns else df["accx"]
+    accy = df["accy_linear"] if "accy_linear" in df.columns else df["accy"]
+    accz = df["accz_linear"] if "accz_linear" in df.columns else df["accz"]
+
+    # ── Core Magnitude Features (orientation-invariant) ───────────────────
+    df["acc_mag"] = np.sqrt(accx**2 + accy**2 + accz.fillna(0)**2)
     df["gyro_mag"] = np.sqrt(df["gyrox"]**2 + df["gyroy"]**2 + df["gyroz"]**2)
     df["jerk_mag"] = df["acc_mag"].diff().fillna(0).abs()
     df["acc_energy"] = (
@@ -212,83 +251,111 @@ def add_engineered_features(df: pd.DataFrame) -> pd.DataFrame:
     rolling_mean = df["acc_mag"].rolling(window=7, min_periods=1).mean()
     df["acc_peak_ratio"] = (df["acc_mag"] / (rolling_mean + 1e-6)).clip(upper=10)
 
-    # ── NEW Feature 1: Resultant Force (speed × acceleration) ─────────────
-    # Captures impact energy — high speed + high acc = likely crash
+    # ── Resultant Force (speed × acceleration) ────────────────────────────
     df["resultant_force"] = df["speed"].abs() * df["acc_mag"]
 
-    # ── NEW Feature 2: Acceleration Skewness (rolling) ────────────────────
-    # Crashes produce asymmetric acceleration distributions
+    # ── Acceleration Skewness (rolling) ───────────────────────────────────
     df["acc_skewness"] = (
         df["acc_mag"].rolling(window=10, min_periods=3)
         .apply(lambda x: pd.Series(x).skew(), raw=False).fillna(0)
     )
 
-    # ── NEW Feature 3: Heading Change Rate ────────────────────────────────
-    # Sudden directional changes indicate loss of control
-    heading = np.arctan2(df["accy"].values, df["accx"].values)
-    heading_diff = np.abs(np.diff(heading, prepend=heading[0]))
-    # Handle wrap-around at ±π
-    heading_diff = np.where(heading_diff > np.pi, 2 * np.pi - heading_diff, heading_diff)
-    df["heading_change_rate"] = heading_diff
+    # ── Angular Velocity Change Rate (replaces heading_change_rate) ───────
+    # Orientation-invariant: uses gyro magnitude instead of raw accx/accy
+    df["angular_velocity_change"] = df["gyro_mag"].diff().fillna(0).abs()
 
-    # ── NEW Feature 4: Multi-axis Correlation ─────────────────────────────
-    # Normal driving has predictable cross-axis patterns; crashes break them
-    rolling_corr = df["accx"].rolling(window=10, min_periods=3).corr(df["accy"]).fillna(0)
-    df["multi_axis_corr"] = rolling_corr.abs()
+    # ── Acc-Gyro Correlation (replaces multi_axis_corr) ───────────────────
+    # Orientation-invariant: correlates magnitudes, not raw axes
+    df["acc_gyro_corr"] = (
+        df["acc_mag"].rolling(window=10, min_periods=3)
+        .corr(df["gyro_mag"]).fillna(0).abs()
+    )
 
-    # ── NEW Feature 5: Multi-Resolution Windows ──────────────────────────
-    # Capture patterns at different time scales
+    # ── Multi-Resolution Windows ──────────────────────────────────────────
     for window in [3, 7, 10]:
         df[f"acc_mag_max_{window}"] = df["acc_mag"].rolling(window, min_periods=1).max().fillna(0)
         df[f"gyro_mag_max_{window}"] = df["gyro_mag"].rolling(window, min_periods=1).max().fillna(0)
 
-    # ── NEW Feature 6: Cumulative Jerk (impact accumulation) ──────────────
+    # ── Cumulative Jerk ───────────────────────────────────────────────────
     df["cumulative_jerk"] = (
         df["jerk_mag"].rolling(window=5, min_periods=1).sum().fillna(0)
     )
 
-    # ── NEW Feature 7: Speed × Deceleration (braking intensity) ───────────
+    # ── Braking Intensity ─────────────────────────────────────────────────
     df["braking_intensity"] = df["speed"].abs() * df["deceleration"]
 
-    df.fillna(0, inplace=True)
+    # ── NEW: Impact Intensity (peak-to-trough in short window) ────────────
+    # Crashes produce large rapid oscillations in acceleration
+    df["impact_intensity"] = (
+        df["acc_mag"].rolling(window=5, min_periods=1).max() -
+        df["acc_mag"].rolling(window=5, min_periods=1).min()
+    ).fillna(0)
+
+    # ── NEW: Gyro-Acc Synchrony ───────────────────────────────────────────
+    # During crashes, both acceleration and rotation spike simultaneously
+    df["gyro_acc_product"] = df["acc_mag"] * df["gyro_mag"]
+
+    # ── NEW: Speed-Weighted Jerk ──────────────────────────────────────────
+    # Jerk at high speed is more dangerous than jerk at low speed
+    df["speed_weighted_jerk"] = df["speed"].abs() * df["jerk_mag"]
+
+    # ── NEW: Rotational Energy ────────────────────────────────────────────
+    # Sustained high rotation = vehicle spinning / rollover
+    df["rotational_energy"] = (
+        df["gyro_mag"].rolling(window=5, min_periods=1)
+        .apply(lambda x: np.sum(x**2), raw=True).fillna(0)
+    )
+
+    numeric_cols = df.select_dtypes(include=[np.number]).columns
+    df[numeric_cols] = df[numeric_cols].fillna(0)
     return df
 
 
-def clip_outliers(df: pd.DataFrame, columns: List[str],
-                  lower_pct: float = 1, upper_pct: float = 99) -> pd.DataFrame:
-    df = df.copy()
+def calculate_clip_bounds(df: pd.DataFrame, columns: List[str],
+                          lower_pct: float = 1, upper_pct: float = 99) -> Dict[str, Tuple[float, float]]:
+    bounds = {}
     for col in columns:
-        if col not in df.columns:
-            continue
-        lo = np.nanpercentile(df[col], lower_pct)
-        hi = np.nanpercentile(df[col], upper_pct)
-        df[col] = df[col].clip(lower=lo, upper=hi)
+        if col in df.columns:
+            lo = np.nanpercentile(df[col], lower_pct)
+            hi = np.nanpercentile(df[col], upper_pct)
+            bounds[col] = (lo, hi)
+    return bounds
+
+def apply_clip_bounds(df: pd.DataFrame, bounds: Dict[str, Tuple[float, float]]) -> pd.DataFrame:
+    df = df.copy()
+    for col, (lo, hi) in bounds.items():
+        if col in df.columns:
+            df[col] = df[col].clip(lower=lo, upper=hi)
     return df
 
 
-# ── EXPANDED FEATURE LIST ─────────────────────────────────────────────────────
+# ── FEATURE LIST (v3 — All Orientation-Invariant) ─────────────────────────────
 FEATURES = [
-    # Original 12
+    # Core magnitude features (12)
     "acc_mag", "gyro_mag", "jerk_mag", "acc_energy",
     "speed", "speed_change", "deceleration",
     "acc_mag_std", "gyro_mag_std", "speed_acc_interaction",
     "gyro_jerk", "acc_peak_ratio",
-    # New discriminative features
-    "resultant_force", "acc_skewness", "heading_change_rate",
-    "multi_axis_corr",
+    # Discriminative features — all orientation-invariant (4)
+    "resultant_force", "acc_skewness",
+    "angular_velocity_change", "acc_gyro_corr",
+    # Multi-resolution windows (6)
     "acc_mag_max_3", "acc_mag_max_7", "acc_mag_max_10",
     "gyro_mag_max_3", "gyro_mag_max_7", "gyro_mag_max_10",
+    # Impact features (6)
     "cumulative_jerk", "braking_intensity",
+    "impact_intensity", "gyro_acc_product",
+    "speed_weighted_jerk", "rotational_energy",
 ]
 
 
 # ==================== GROUND TRUTH LABELING ====================
 
 def generate_ground_truth_multi_signal(
-    df: pd.DataFrame, window_before: int = 2, window_after: int = 1,
-    n_std: float = 2.5,
+    df: pd.DataFrame, window_before: int = 3, window_after: int = 2,
+    n_std: float = 2.0,
 ) -> pd.DataFrame:
-    """Label crash zones using multi-signal consensus with tight windows."""
+    """Label crash zones using multi-signal consensus."""
     if df.empty:
         return df
     df = df.copy()
@@ -315,7 +382,7 @@ def generate_ground_truth_multi_signal(
             n_signals += 1
         if gyro_spike.iloc[w_start:w_end].any():
             n_signals += 1
-        if n_signals >= 3:
+        if n_signals >= 2:
             crash_signal[i] = 1
 
     if crash_signal.sum() == 0:
@@ -335,21 +402,27 @@ def generate_ground_truth_multi_signal(
     return df
 
 
-def generate_ground_truth_type_record(
-    df: pd.DataFrame, window_before: int = 2, window_after: int = 1,
-) -> pd.DataFrame:
+def generate_ground_truth_type_record(df: pd.DataFrame) -> pd.DataFrame:
+    """Label crash zones using type_record.
+    Crash rows (type_record>=1) often lack real sensor data. So we label
+    a window of normal rows BEFORE each crash event, plus the crash rows
+    themselves. This lets the model detect the sensor patterns leading to crashes."""
     if df.empty or "type_record" not in df.columns:
         return df
     df = df.copy()
-    df["label"] = 0
     tr = pd.to_numeric(df["type_record"], errors="coerce").fillna(0).astype(int)
+    df["label"] = 0
 
-    for target in [1, 2]:
-        crash_starts = (tr == target) & (tr.shift(1, fill_value=0) == 0)
-        for idx in df.index[crash_starts]:
-            start = max(0, idx - window_before)
-            end = min(len(df) - 1, idx + window_after)
-            df.loc[start : end, "label"] = 1
+    # Label crash rows directly
+    df.loc[tr >= 1, "label"] = 1
+
+    # Also label a window of normal rows BEFORE each crash start
+    # These rows have real sensor data showing the crash patterns
+    window_before = 3
+    crash_starts = ((tr >= 1) & (tr.shift(1, fill_value=0) == 0))
+    for idx in df.index[crash_starts]:
+        start = max(0, idx - window_before)
+        df.loc[start:idx, "label"] = 1
 
     crash_pct = df["label"].mean() * 100
     log.info("  type_record labels: %.1f%% crash (%d/%d)", crash_pct, df["label"].sum(), len(df))
@@ -358,28 +431,54 @@ def generate_ground_truth_type_record(
 
 def run_preprocessing(datasets: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
     processed = {}
+    # Determine which datasets are training vs test
+    training_keys = {"training", "general_table_training", "imu_training"}
+
     for key, df in datasets.items():
         log.info("Preprocessing: %s (%d rows)", key, len(df))
         has_type_record = "type_record" in df.columns
+        has_label = "label" in df.columns
+        is_training = key in training_keys
 
         df = ensure_sensor_columns(df)
 
-        if has_type_record and "general_table" in key:
+        # Label general_table test datasets using type_record directly
+        if has_type_record and "general_table" in key and not is_training:
             df = generate_ground_truth_type_record(df)
 
-        df = filter_valid_sensor_rows(df, has_type_record=has_type_record)
+        # imu_labeled_test already has labels — keep them
+        # imu_training already has labels removed (normal only)
+
+        # Only drop crash rows from training data, keep them in test data
+        df = filter_valid_sensor_rows(df, has_type_record=has_type_record,
+                                       is_training=is_training)
         if df.empty:
             log.warning("  Skipped %s (empty after filtering)", key)
             continue
 
         df = preprocess_sensors(df)
         df = add_engineered_features(df)
-        df = clip_outliers(df, FEATURES)
         processed[key] = df
 
+    # Label controlled_test (no type_record) using multi-signal detection
     for key in ["controlled_test"]:
         if key in processed:
             processed[key] = generate_ground_truth_multi_signal(processed[key])
+
+    # Calculate global clip bounds based on ALL training data to prevent scale mismatch
+    training_dfs = []
+    for key in training_keys:
+        if key in processed and not processed[key].empty:
+            training_dfs.append(processed[key])
+
+    if training_dfs:
+        combined_train = pd.concat(training_dfs, ignore_index=True)
+        global_bounds = calculate_clip_bounds(combined_train, FEATURES, lower_pct=1, upper_pct=99.5)
+        # Apply these exact bounds to ALL datasets
+        for key in processed.keys():
+            processed[key] = apply_clip_bounds(processed[key], global_bounds)
+    else:
+        log.warning("No training data found to calculate global clip bounds.")
 
     return processed
 
@@ -717,7 +816,7 @@ def plot_summary_report(results: Dict[str, dict], save_path: str) -> None:
         ax.set_xlim(0, 1.15)
         ax.set_title(key.replace("_", " ").title(), fontsize=13, fontweight="bold")
         ax.grid(True, axis="x", alpha=0.3)
-    fig.suptitle("Model Performance Summary (v2 — Improved)", fontsize=16, fontweight="bold", y=1.03)
+    fig.suptitle("Model Performance Summary (v3 — Orientation-Invariant)", fontsize=16, fontweight="bold", y=1.03)
     fig.tight_layout()
     fig.savefig(save_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
@@ -758,23 +857,33 @@ def find_best_threshold(y_true: np.ndarray, scores: np.ndarray) -> Tuple[float, 
 def main() -> None:
     os.makedirs(SAVE_DIR, exist_ok=True)
     log.info("=" * 60)
-    log.info("  FYP AI — Vehicle Accident Detection System (v2 — Improved)")
-    log.info("  Key improvements: Normal-only training, RobustScaler,")
-    log.info("  24 features, SEQ_LEN=20, temporal smoothing, skip connections")
+    log.info("  FYP AI — Vehicle Accident Detection System (v3 — Orientation-Invariant)")
+    log.info("  Key improvements: Gravity removal from all axes, 28 orientation-")
+    log.info("  invariant features, SEQ_LEN=15, speed gate, stronger ensemble")
     log.info("=" * 60)
 
     # ── 1. Load & preprocess ──────────────────────────────────────
     datasets = load_all_datasets()
     datasets = run_preprocessing(datasets)
 
-    # ── 2. Scale features (IMPROVED: RobustScaler) ────────────────
-    scaler = RobustScaler()  # IMPROVED: was MinMaxScaler — resistant to crash outliers
-    if "training" not in datasets or datasets["training"].empty:
-        log.error("Training dataset is missing or empty. Aborting.")
+    # ── 2. Scale features (IMPROVED: StandardScaler) ────────────────
+    scaler = StandardScaler()  # StandardScaler handles the bimodal gyro distribution better
+
+    # Combine all normal training data for scaler fitting
+    training_dfs = []
+    if "training" in datasets and not datasets["training"].empty:
+        training_dfs.append(datasets["training"][FEATURES])
+    if "imu_training" in datasets and not datasets["imu_training"].empty:
+        training_dfs.append(datasets["imu_training"][FEATURES])
+
+    if not training_dfs:
+        log.error("No training data available. Aborting.")
         return
-    scaler.fit(datasets["training"][FEATURES])
-    log.info("RobustScaler fitted on training data (%d rows, %d features)",
-             len(datasets["training"]), len(FEATURES))
+
+    combined_training_features = pd.concat(training_dfs, ignore_index=True)
+    scaler.fit(combined_training_features)
+    log.info("StandardScaler fitted on combined training data (%d rows, %d features)",
+             len(combined_training_features), len(FEATURES))
 
     scaled_data: Dict[str, np.ndarray] = {}
     for key, df in datasets.items():
@@ -784,22 +893,39 @@ def main() -> None:
     # ── 3. Isolation Forest (IMPROVED params) ─────────────────────
     log.info("Training Isolation Forest (n_estimators=%d, contamination=%.3f)",
              IF_ESTIMATORS, IF_CONTAMINATION)
+
+    # Combine normal training data for IF
+    combined_scaled_training = np.concatenate(
+        [v for k, v in scaled_data.items() if k in {"training", "imu_training"}],
+        axis=0,
+    )
+    log.info("Combined normal training data for IF: %d rows", len(combined_scaled_training))
+
     iso_forest = IsolationForest(
         n_estimators=IF_ESTIMATORS,
         contamination=IF_CONTAMINATION,
-        max_features=1.0,          # FIXED: ONNX requires max_features=1.0 for IsolationForest
-        bootstrap=True,            # NEW: bootstrap sampling for variance
+        max_features=1.0,          # ONNX requires max_features=1.0
+        bootstrap=True,
         random_state=SEED,
         n_jobs=-1,
     )
-    iso_forest.fit(scaled_data["training"])
+    iso_forest.fit(combined_scaled_training)
 
     # ── 4. LSTM Autoencoder — trained on NORMAL data only ─────────
-    # Training data is already 100% normal (type_record=0 for all 821 rows)
-    # This is the KEY improvement: autoencoder learns normal patterns only
     n_features = len(FEATURES)
-    X_train_raw = create_sequences(scaled_data["training"], SEQ_LEN)
-    log.info("Normal-only training sequences: %d, shape %s", len(X_train_raw), X_train_raw.shape)
+
+    # Combine normal sequences from both training sources
+    train_sequences = []
+    for train_key in ["training", "imu_training"]:
+        if train_key in scaled_data:
+            seqs = create_sequences(scaled_data[train_key], SEQ_LEN)
+            if len(seqs) > 0:
+                train_sequences.append(seqs)
+                log.info("  %s → %d sequences", train_key, len(seqs))
+
+    X_train_raw = np.concatenate(train_sequences, axis=0)
+    log.info("Combined normal-only training sequences: %d, shape %s",
+             len(X_train_raw), X_train_raw.shape)
 
     # Augment normal data with enhanced augmentation
     X_train = augment_training_sequences(X_train_raw, multiplier=AUG_MULTIPLIER)
@@ -853,6 +979,26 @@ def main() -> None:
 
     log.info("All models saved successfully in ONNX format.")
 
+    # Export model config for mobile app
+    import json
+    mobile_config = {
+        "speed_gate_kmh": SPEED_GATE_KMH,
+        "seq_len": SEQ_LEN,
+        "n_features": n_features,
+        "feature_names": FEATURES,
+        "lstm_threshold": lstm_train_threshold,
+        "threshold_percentile": THRESHOLD_PERCENTILE,
+        "notes": [
+            "Use linear acceleration (gravity-removed) on mobile",
+            "All features are orientation-invariant",
+            "Skip inference when speed < speed_gate_kmh",
+        ],
+    }
+    config_path = os.path.join(SAVE_DIR, "mobile_config.json")
+    with open(config_path, "w") as f:
+        json.dump(mobile_config, f, indent=2)
+    log.info("Saved mobile config: %s", config_path)
+
     plot_feature_importance(
         iso_forest, FEATURES, os.path.join(SAVE_DIR, "feature_importance.png"),
     )
@@ -863,6 +1009,7 @@ def main() -> None:
         "general_table_controlled_test",
         "uncontrolled_test",
         "general_table_uncontrolled_test",
+        "imu_labeled_test",
     ]
     summary_results: Dict[str, dict] = {}
 
@@ -990,7 +1137,7 @@ def main() -> None:
 
     log.info("")
     log.info("  ┌─────────────────────────────────────────────────────────┐")
-    log.info("  │  RESULTS SUMMARY (v2 — Improved)                       │")
+    log.info("  │  RESULTS SUMMARY (v3 — Orientation-Invariant)              │")
     log.info("  ├──────────────────────────┬──────┬──────┬──────┬────────┤")
     log.info("  │ Dataset                  │  Acc │ Prec │  Rec │   F1   │")
     log.info("  ├──────────────────────────┼──────┼──────┼──────┼────────┤")
