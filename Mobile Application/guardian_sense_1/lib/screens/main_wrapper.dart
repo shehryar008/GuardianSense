@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'home_screen.dart';
+import 'chatbot_screen.dart';
 import 'profile_screen.dart';
 import '../services/sensor_service.dart';
 import '../widgets/emergency_alert_overlay.dart';
@@ -22,7 +23,7 @@ class _MainWrapperState extends State<MainWrapper> {
 
   final List<Widget> _screens = [
     const HomeScreen(),
-    const Center(child: Text('Chatbot - Coming Soon', style: TextStyle(fontSize: 18, color: Colors.grey))),
+    const ChatbotScreen(),
     const ProfileScreen(),
   ];
 
