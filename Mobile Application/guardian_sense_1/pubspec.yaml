@@ -29,19 +29,10 @@ dependencies:
   # Audio
   audioplayers: ^6.1.0       # For alarm sound on accident detection
 
-  # AI Chatbot
-  google_generative_ai: ^0.4.3
-
 dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
-  flutter_launcher_icons: ^0.13.1
-
-flutter_launcher_icons:
-  android: true
-  ios: true
-  image_path: "assets/icon/app_icon.png"
 
 flutter:
   uses-material-design: true

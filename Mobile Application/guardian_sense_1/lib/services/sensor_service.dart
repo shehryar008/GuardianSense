@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
+import 'dart:io' show Platform;
 import 'package:flutter/services.dart';
 import 'package:onnxruntime/onnxruntime.dart';
 import 'package:sensors_plus/sensors_plus.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SensorService {
@@ -21,7 +23,7 @@ class SensorService {
   final int _seqLen = 15;       // SEQ_LEN from main.py
   final int _numFeatures = 28;  // 28 orientation-invariant features
   final double _speedGateKmh = 5.0;
-  final double _lstmThreshold = 0.8079; // Calibrated from training (99.5th percentile)
+  final double _lstmThreshold = 0.80173; // Calibrated from training (99.5th percentile)
 
   // --- Sequence Buffer for LSTM ---
   final List<List<double>> _sequenceBuffer = [];
@@ -239,8 +241,10 @@ class SensorService {
   double _rollingStd(List<double> history, int window) {
     if (history.length < 2) return 0.0;
     final w = history.length >= window ? history.sublist(history.length - window) : history;
-    final mean = w.reduce((a, b) => a + b) / w.length;
-    final variance = w.fold(0.0, (s, v) => s + (v - mean) * (v - mean)) / w.length;
+    final int n = w.length;
+    if (n < 2) return 0.0;
+    final mean = w.reduce((a, b) => a + b) / n;
+    final variance = w.fold(0.0, (s, v) => s + (v - mean) * (v - mean)) / (n - 1);
     return math.sqrt(variance);
   }
 
@@ -259,12 +263,18 @@ class SensorService {
   double _rollingSkewness(List<double> history, int window) {
     if (history.length < 3) return 0.0;
     final w = history.length >= window ? history.sublist(history.length - window) : history;
-    final n = w.length;
-    final mean = w.reduce((a, b) => a + b) / n;
-    final std = math.sqrt(w.fold(0.0, (s, v) => s + (v - mean) * (v - mean)) / n);
-    if (std < 1e-10) return 0.0;
-    final m3 = w.fold(0.0, (s, v) => s + math.pow((v - mean) / std, 3)) / n;
-    return m3;
+    final int n = w.length;
+    if (n < 3) return 0.0;
+    final double mean = w.reduce((a, b) => a + b) / n;
+    final double sampleVariance = w.fold(0.0, (s, v) => s + (v - mean) * (v - mean)) / (n - 1);
+    if (sampleVariance < 1e-10) return 0.0;
+    final double sampleStd = math.sqrt(sampleVariance);
+    
+    double sumCubed = 0.0;
+    for (var v in w) {
+      sumCubed += math.pow((v - mean) / sampleStd, 3);
+    }
+    return (n / ((n - 1) * (n - 2))) * sumCubed;
   }
 
   double _rollingCorrelation(List<double> histA, List<double> histB, int window) {
@@ -435,9 +445,44 @@ class SensorService {
 
   // ===================== 6. Start / Stop Monitoring =====================
 
+  /// Request location permissions at runtime using Geolocator.
+  /// Returns true if location access was granted.
+  Future<bool> _requestLocationPermission() async {
+    bool serviceEnabled;
+    LocationPermission permission;
+
+    // Check if location services are enabled
+    serviceEnabled = await Geolocator.isLocationServiceEnabled();
+    if (!serviceEnabled) {
+      print('❌ Location services are disabled. Please enable GPS.');
+      return false;
+    }
+
+    permission = await Geolocator.checkPermission();
+    if (permission == LocationPermission.denied) {
+      permission = await Geolocator.requestPermission();
+      if (permission == LocationPermission.denied) {
+        print('❌ Location permissions are denied');
+        return false;
+      }
+    }
+
+    if (permission == LocationPermission.deniedForever) {
+      print('❌ Location permissions are permanently denied. Please enable in Settings.');
+      await Geolocator.openAppSettings();
+      return false;
+    }
+
+    print('✅ Location permission granted.');
+    return true;
+  }
+
   Future<void> startMonitoring() async {
     if (_isMonitoring) return;
     await initModels();
+
+    // --- Request location permission BEFORE starting GPS stream ---
+    final hasLocationPermission = await _requestLocationPermission();
 
     // Use userAccelerometerEventStream — this gives LINEAR acceleration
     // (gravity already removed by the OS), matching model training
@@ -449,20 +494,48 @@ class SensorService {
       _latestData['gx'] = e.x; _latestData['gy'] = e.y; _latestData['gz'] = e.z;
       _dataController.add(Map.from(_latestData));
     });
-    _gpsSub = Geolocator.getPositionStream(
-      locationSettings: AndroidSettings(
-        accuracy: LocationAccuracy.high,
-        distanceFilter: 0,                                    // Fire on EVERY update, not just when moved
-        intervalDuration: const Duration(milliseconds: 1000), // Request updates every 1 second
-      ),
-    ).listen((p) {
-      // GPS returns speed = -1.0 when no speed fix is available.
-      // Clamp to 0 to prevent negative speeds from blocking the speed gate.
-      final double rawSpeed = p.speed;
-      _latestData['speed'] = (rawSpeed > 0) ? rawSpeed * 3.6 : 0.0; // m/s -> km/h
-      print('   📍 GPS: raw=${rawSpeed.toStringAsFixed(2)} m/s → ${_latestData['speed']!.toStringAsFixed(1)} km/h (acc: ${p.accuracy.toStringAsFixed(0)}m)');
-      _dataController.add(Map.from(_latestData));
-    });
+
+    // Only start GPS stream if permission was granted
+    if (hasLocationPermission) {
+      LocationSettings locationSettings;
+      if (Platform.isAndroid) {
+        locationSettings = AndroidSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0, // Continuous updates
+          intervalDuration: const Duration(seconds: 1), // 1-second interval
+        );
+      } else if (Platform.isIOS) {
+        locationSettings = AppleSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          activityType: ActivityType.automotiveNavigation,
+          distanceFilter: 0,
+          pauseLocationUpdatesAutomatically: false,
+        );
+      } else {
+        locationSettings = const LocationSettings(
+          accuracy: LocationAccuracy.bestForNavigation,
+          distanceFilter: 0,
+        );
+      }
+
+      _gpsSub = Geolocator.getPositionStream(
+        locationSettings: locationSettings,
+      ).listen(
+        (p) {
+          // Clamp negative speed values (GPS can report -1 when unavailable)
+          final rawSpeed = p.speed < 0 ? 0.0 : p.speed;
+          _latestData['speed'] = rawSpeed * 3.6; // m/s -> km/h
+          print('📍 GPS Update — Speed: ${_latestData['speed']!.toStringAsFixed(1)} km/h | Lat: ${p.latitude.toStringAsFixed(5)} | Lng: ${p.longitude.toStringAsFixed(5)}');
+          _dataController.add(Map.from(_latestData));
+        },
+        onError: (error) {
+          print('⚠️ GPS Stream Error: $error');
+          // Speed stays at last known value or 0.0
+        },
+      );
+    } else {
+      print('⚠️ GPS speed tracking disabled — no location permission.');
+    }
 
     _inferenceTimer = Timer.periodic(const Duration(seconds: 1), (_) => _performInference());
     _isMonitoring = true;
