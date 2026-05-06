@@ -6,3 +6,6 @@ Web-App/node_modules/
 .next/
 dist/
 build/
+
+# API Keys
+**/app_constants.dart
