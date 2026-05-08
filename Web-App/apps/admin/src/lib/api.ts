@@ -1,4 +1,4 @@
-const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
 
 interface ApiResponse<T = unknown> {
   success: boolean;
@@ -122,7 +122,7 @@ export interface PoliceStation {
 
 export interface Incident {
   incident_id: number;
-  user_id: number;
+  user_id: string | number;
   latitude: number;
   longitude: number;
   is_active: boolean;
@@ -142,7 +142,7 @@ export interface IncidentDispatch {
 }
 
 export interface User {
-  user_id: number;
+  user_id: string | number;
   name: string;
   email: string;
   phone: string;

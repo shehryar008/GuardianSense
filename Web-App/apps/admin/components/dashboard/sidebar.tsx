@@ -7,24 +7,18 @@ import {
   LayoutDashboardIcon,
   BuildingIcon,
   BadgeIcon,
-  BarChart3Icon,
   FileTextIcon,
-  UsersIcon,
   ClockIcon,
-  SettingsIcon,
-  KeyRoundIcon, // Added KeyRoundIcon import
+  KeyRoundIcon,
 } from "../../components/shared/icons"
 
 const navItems = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboardIcon },
   { name: "Hospital Data", href: "/dashboard/hospital", icon: BuildingIcon },
   { name: "Police Data", href: "/dashboard/police", icon: BadgeIcon },
-  { name: "Analytics", href: "/dashboard/analytics", icon: BarChart3Icon },
   { name: "Reports", href: "/dashboard/reports", icon: FileTextIcon },
-  { name: "Access Management", href: "/dashboard/access", icon: KeyRoundIcon }, // Added Access Management nav item
-  { name: "Personnel", href: "/dashboard/personnel", icon: UsersIcon },
+  { name: "Access Management", href: "/dashboard/access", icon: KeyRoundIcon },
   { name: "Activity Log", href: "/dashboard/activity", icon: ClockIcon },
-  { name: "Settings", href: "/dashboard/settings", icon: SettingsIcon },
 ]
 
 export function Sidebar() {

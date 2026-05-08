@@ -8,8 +8,8 @@ interface FacilityData {
   response: string
   satisfaction?: string
   resolution?: string
-  beds?: number
-  units?: number
+  beds?: number | string
+  units?: number | string
 }
 
 interface FacilityCardProps {

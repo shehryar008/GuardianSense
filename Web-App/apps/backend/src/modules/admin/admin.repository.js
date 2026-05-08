@@ -16,13 +16,14 @@ const findAdminByEmail = async (email) => {
 // ─── Dashboard Stats ──────────────────────────────────────────────────────────
 
 const getDashboardStats = async () => {
-  const [hospitals, policeStations, activeIncidents, resolvedIncidents, dispatches] =
+  const [hospitals, policeStations, activeIncidents, resolvedIncidents, dispatches, users] =
     await Promise.all([
       supabase.from('hospitals').select('hospital_id', { count: 'exact', head: true }).eq('is_active', true),
       supabase.from('police_stations').select('station_id', { count: 'exact', head: true }).eq('is_active', true),
       supabase.from('incidents').select('incident_id', { count: 'exact', head: true }).eq('is_active', true),
       supabase.from('incidents').select('incident_id', { count: 'exact', head: true }).eq('is_active', false),
       supabase.from('incident_dispatch').select('dispatch_id', { count: 'exact', head: true }),
+      supabase.from('profiles').select('id', { count: 'exact', head: true }),
     ]);
 
   return {
@@ -30,7 +31,7 @@ const getDashboardStats = async () => {
     active_police_stations: policeStations.count || 0,
     active_incidents: activeIncidents.count || 0,
     resolved_incidents: resolvedIncidents.count || 0,
-    total_users: 0,
+    total_users: users.count || 0,
     total_dispatches: dispatches.count || 0,
   };
 };
@@ -132,23 +133,51 @@ const findAllIncidents = async ({ status, from_date, to_date } = {}) => {
 };
 
 const findIncidentById = async (id) => {
-  const { data, error } = await supabase
+  const { data: incident, error } = await supabase
     .from('incidents')
-    .select('*, incident_dispatch(*, hospitals(hospital_name, phone), police_stations(station_name, phone))')
+    .select('*, incident_dispatch(dispatch_id, incident_id, responder_type, hospital_id, station_id, dispatch_status, dispatched_at)')
     .eq('incident_id', id)
     .single();
 
   if (error && error.code === 'PGRST116') return null;
   if (error) throw error;
-  return data;
+
+  // Manually look up hospital/police names (no FK relationship in DB)
+  if (incident && incident.incident_dispatch) {
+    for (const dispatch of incident.incident_dispatch) {
+      if (dispatch.hospital_id) {
+        const { data: hosp } = await supabase.from('hospitals').select('hospital_name, phone').eq('hospital_id', dispatch.hospital_id).maybeSingle();
+        dispatch.hospitals = hosp;
+      }
+      if (dispatch.station_id) {
+        const { data: station } = await supabase.from('police_stations').select('station_name, phone').eq('station_id', dispatch.station_id).maybeSingle();
+        dispatch.police_stations = station;
+      }
+    }
+  }
+
+  return incident;
 };
 
 // ─── Users ────────────────────────────────────────────────────────────────────
 
 const findAllUsers = async () => {
-  // The users table does not exist in the database schema.
-  // Returning an empty array to prevent 500 errors on the frontend.
-  return [];
+  const { data, error } = await supabase
+    .from('profiles')
+    .select('*');
+
+  if (error) throw error;
+  
+  return data.map(profile => ({
+    user_id: profile.id,
+    name: profile.full_name,
+    email: profile.email,
+    phone: profile.phone_number,
+    address: profile.address,
+    blood_type: profile.blood_type,
+    medical_conditions: profile.allergies,
+    registered_at: profile.updated_at || profile.created_at || new Date().toISOString()
+  }));
 };
 
 // ─── Reports ──────────────────────────────────────────────────────────────────
@@ -157,7 +186,7 @@ const getReportData = async ({ from_date, to_date, department } = {}) => {
   // Get incidents with dispatch info
   let query = supabase
     .from('incidents')
-    .select('incident_id, is_active, detected_at, resolved_at, incident_dispatch(dispatch_id, responder_type, dispatch_status, dispatched_at)')
+    .select('incident_id, is_active, detected_at, incident_dispatch(dispatch_id, responder_type, dispatch_status, dispatched_at)')
     .order('detected_at', { ascending: false });
 
   if (from_date) query = query.gte('detected_at', from_date);
@@ -205,18 +234,36 @@ const getActivityLog = async (limit = 50) => {
   const [incidentsResult, dispatchesResult] = await Promise.all([
     supabase
       .from('incidents')
-      .select('incident_id, is_active, detected_at, resolved_at')
+      .select('incident_id, is_active, detected_at')
       .order('detected_at', { ascending: false })
       .limit(limit),
     supabase
       .from('incident_dispatch')
-      .select('dispatch_id, responder_type, dispatch_status, dispatched_at, hospitals(hospital_name), police_stations(station_name)')
+      .select('dispatch_id, responder_type, dispatch_status, dispatched_at, hospital_id, station_id')
       .order('dispatched_at', { ascending: false })
       .limit(limit),
   ]);
 
   if (incidentsResult.error) throw incidentsResult.error;
   if (dispatchesResult.error) throw dispatchesResult.error;
+
+  // Fetch hospital and police station names separately (no FK in DB)
+  const hospitalIds = [...new Set(dispatchesResult.data.filter(d => d.hospital_id).map(d => d.hospital_id))];
+  const stationIds = [...new Set(dispatchesResult.data.filter(d => d.station_id).map(d => d.station_id))];
+
+  const [hospitalsRes, stationsRes] = await Promise.all([
+    hospitalIds.length > 0
+      ? supabase.from('hospitals').select('hospital_id, hospital_name').in('hospital_id', hospitalIds)
+      : { data: [] },
+    stationIds.length > 0
+      ? supabase.from('police_stations').select('station_id, station_name').in('station_id', stationIds)
+      : { data: [] },
+  ]);
+
+  const hospitalMap = {};
+  (hospitalsRes.data || []).forEach(h => { hospitalMap[h.hospital_id] = h.hospital_name; });
+  const stationMap = {};
+  (stationsRes.data || []).forEach(s => { stationMap[s.station_id] = s.station_name; });
 
   // Transform into activity log entries
   const activities = [];
@@ -229,19 +276,18 @@ const getActivityLog = async (limit = 50) => {
         : `Incident #${incident.incident_id} resolved`,
       category: 'Incident',
       actor: 'System',
-      timestamp: incident.is_active ? incident.detected_at : incident.resolved_at || incident.detected_at,
+      timestamp: incident.detected_at,
     });
   }
 
   for (const dispatch of dispatchesResult.data) {
-    const responderName =
-      dispatch.responder_type === 'Hospital'
-        ? dispatch.hospitals?.hospital_name
-        : dispatch.police_stations?.station_name;
+    const responderName = dispatch.responder_type === 'Hospital'
+      ? hospitalMap[dispatch.hospital_id] || 'Unknown'
+      : stationMap[dispatch.station_id] || 'Unknown';
 
     activities.push({
       type: 'dispatch',
-      title: `${dispatch.responder_type} dispatched: ${responderName || 'Unknown'} (${dispatch.dispatch_status})`,
+      title: `${dispatch.responder_type} dispatched: ${responderName} (${dispatch.dispatch_status})`,
       category: dispatch.responder_type === 'Hospital' ? 'Medical' : 'Police',
       actor: 'Dispatch',
       timestamp: dispatch.dispatched_at,

@@ -98,10 +98,6 @@ export default function PoliceDataPage() {
                 >
                   {isLoading ? 'Loading...' : 'Refresh'}
                 </button>
-                <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">
-                  <DownloadIcon className="w-4 h-4" />
-                  Export
-                </button>
               </div>
             </div>
 

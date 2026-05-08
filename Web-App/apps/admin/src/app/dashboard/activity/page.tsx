@@ -49,21 +49,9 @@ export default function ActivityLogPage() {
       <div className="ml-[200px]">
         <Header />
         <main className="p-6">
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">System Activity Log</h1>
-              <p className="text-gray-500 text-sm">Real-time track of all system events and dispatches</p>
-            </div>
-            <div className="flex items-center gap-3">
-              <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-200 rounded-lg hover:bg-gray-50">
-                <FilterIcon className="w-4 h-4" />
-                Filter Activity
-              </button>
-              <button className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-violet-600 rounded-lg hover:bg-violet-700">
-                <DownloadIcon className="w-4 h-4" />
-                Export Logs
-              </button>
-            </div>
+          <div className="mb-6">
+            <h1 className="text-2xl font-bold text-gray-900">System Activity Log</h1>
+            <p className="text-gray-500 text-sm">Real-time track of all system events and dispatches</p>
           </div>
 
           {error && (
