@@ -15,14 +15,34 @@ class SensorService {
   SensorService._internal();
 
   // --- ONNX Sessions ---
-  OrtSession? _scalerSession;
   OrtSession? _ifSession;
   OrtSession? _lstmSession;
+
+  // --- Manual Scaler (extracted from scaler.onnx) ---
+  // The ONNX Scaler op (ai.onnx.ml domain) is NOT supported by mobile runtime.
+  // Formula: scaled = (input - offset) * scale
+  static const List<double> _scalerOffset = [
+    0.5812240839004517, 0.45880013704299927, 0.27857404947280884, 2.1035547256469727,
+    46.16666030883789, 18.69965934753418, 9.338562965393066, 0.23838044703006744,
+    0.2717263400554657, 26.08204460144043, 0.2955499291419983, 1.0037987232208252,
+    26.08204460144043, 0.4107585847377777, 0.2955499291419983, 0.28528305888175964,
+    0.7979305386543274, 0.960808277130127, 1.026084303855896, 0.7130987048149109,
+    0.97223299741745, 1.1061550378799438, 1.395164132118225, 314.6629943847656,
+    0.5867232084274292, 0.40695685148239136, 12.364639282226562, 14.307472229003906,
+  ];
+  static const List<double> _scalerScale = [
+    3.5216729640960693, 0.6616964936256409, 4.3898773193359375, 0.7138369679450989,
+    0.0494876429438591, 0.07000245898962021, 0.0725044310092926, 9.120372772216797,
+    1.07450532913208, 0.061143286526203156, 0.8436436057090759, 2.3928940296173096,
+    0.061143286526203156, 1.4646075963974, 0.8436436057090759, 4.9845991134643555,
+    3.4742870330810547, 3.34252667427063, 3.2636709213256836, 0.43467336893081665,
+    0.3243963420391083, 0.2853882908821106, 1.565499186515808, 0.0022339678835123777,
+    3.6795170307159424, 0.5867322087287903, 0.08749629557132721, 0.014429906383156776,
+  ];
 
   // --- Model Constants (must match mobile_config.json / main.py v3) ---
   final int _seqLen = 15;       // SEQ_LEN from main.py
   final int _numFeatures = 28;  // 28 orientation-invariant features
-  final double _speedGateKmh = 5.0;
   final double _lstmThreshold = 0.80173; // Calibrated from training (99.5th percentile)
 
   // --- Sequence Buffer for LSTM ---
@@ -71,10 +91,11 @@ class SensorService {
   Future<void> initModels() async {
     try {
       OrtEnv.instance.init();
-      _scalerSession = await _createSession("lib/assets/models/scaler.onnx");
+      // NOTE: scaler.onnx uses ai.onnx.ml Scaler op (unsupported on mobile).
+      // Scaling is done manually via _scaleFeatures() instead.
       _ifSession = await _createSession("lib/assets/models/isolation_forest.onnx");
       _lstmSession = await _createSession("lib/assets/models/lstm_autoencoder.onnx");
-      print("✅ AI Models Loaded Successfully (v3 — 28 features, seq_len=$_seqLen)");
+      print("✅ AI Models Loaded Successfully (v3 — 28 features, seq_len=$_seqLen, manual scaler)");
     } catch (e) {
       print("❌ Error loading models: $e");
     }
@@ -300,29 +321,25 @@ class SensorService {
 
   int _inferenceCount = 0;
 
-  Future<void> _performInference() async {
-    if (_scalerSession == null) return;
-
-    // --- SPEED GATE: Skip inference when nearly stationary ---
-    final double currentSpeed = _latestData['speed'] ?? 0.0;
-    if (currentSpeed < _speedGateKmh) {
-      // Still compute features to keep rolling buffers warm
-      _engineerFeatures();
-      if (_inferenceCount % 5 == 0) {
-        print('   ⏸️  Speed gate: ${currentSpeed.toStringAsFixed(1)} km/h < $_speedGateKmh — skipping inference');
-      }
-      _inferenceCount++;
-      return;
+  /// Apply StandardScaler transform: scaled = (input - offset) * scale
+  /// Then clamp to [-5, 5] to match training pipeline's percentile clipping.
+  /// Without clamping, sensor spikes produce extreme scaled values (e.g. 2000+)
+  /// that the LSTM cannot reconstruct, causing MSE to explode.
+  List<double> _scaleFeatures(List<double> raw) {
+    final scaled = List<double>.filled(raw.length, 0.0);
+    for (int i = 0; i < raw.length; i++) {
+      scaled[i] = ((raw[i] - _scalerOffset[i]) * _scalerScale[i]).clamp(-5.0, 5.0);
     }
+    return scaled;
+  }
 
-    // --- Compute all 28 features ---
+  Future<void> _performInference() async {
+    if (_ifSession == null && _lstmSession == null) return;
+
+    // --- Compute features, scale, and fill the buffer every tick ---
     final rawFeatures = _engineerFeatures();
+    final scaledList = _scaleFeatures(rawFeatures);
 
-    // --- Scale features using the ONNX scaler ---
-    final scaled = await _runOnnx(rawFeatures, _scalerSession!, [1, _numFeatures]);
-    final scaledList = scaled.map((e) => e.toDouble()).toList();
-
-    // --- Add to sequence buffer ---
     _sequenceBuffer.add(scaledList);
     if (_sequenceBuffer.length > _seqLen) _sequenceBuffer.removeAt(0);
 
@@ -359,7 +376,6 @@ class SensorService {
 
     // --- FINAL VERDICT ---
     // Both models must agree: IF says anomaly (-1) AND LSTM MSE exceeds threshold.
-    // Using AND prevents false positives from a single noisy model.
     final isAccident = (ifLabel == -1) && lstmAnomaly;
 
     final now = DateTime.now();
@@ -371,8 +387,8 @@ class SensorService {
       _accidentController.add(null);
       _insertIncident();
     } else if (_inferenceCount % 5 == 0) {
-      // Print status every 5 seconds to avoid log spam
-      print('   ✅ Normal — IF:$ifLabel | MSE:${lstmMSE.toStringAsFixed(4)} (thresh:$_lstmThreshold) | Speed:${currentSpeed.toStringAsFixed(1)}');
+      final speed = _latestData['speed'] ?? 0.0;
+      print('   ✅ Normal — IF:$ifLabel | MSE:${lstmMSE.toStringAsFixed(4)} | Speed:${speed.toStringAsFixed(1)}');
     }
   }
 
@@ -424,7 +440,12 @@ class SensorService {
     final inputs = {session.inputNames.first: inputTensor};
     final outputs = await session.runAsync(runOptions, inputs);
 
-    List<double> result = _flattenToDoubles(outputs?[0]?.value ?? []);
+    if (outputs == null || outputs.isEmpty) {
+      print('   ❌ ONNX Error: Session run returned no outputs');
+      return [];
+    }
+
+    List<double> result = _flattenToDoubles(outputs[0]?.value ?? []);
 
     inputTensor.release();
     runOptions.release();
