@@ -48,7 +48,5 @@ flutter:
 
   # Assets must be declared here under the flutter section
   assets:
-    - lib/assets/models/scaler.onnx
-    - lib/assets/models/isolation_forest.onnx
-    - lib/assets/models/lstm_autoencoder.onnx
-    - lib/assets/audio/alarm.wav
+    - lib/assets/models/
+    - lib/assets/audio/

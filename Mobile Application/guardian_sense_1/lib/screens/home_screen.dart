@@ -103,7 +103,7 @@ class _HomeScreenState extends State<HomeScreen> {
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
                                   const Text("SPEED: ", style: TextStyle(color: Colors.white54, fontSize: 10)),
-                                  Text("${vals['speed']?.toStringAsFixed(1)} KM/H",
+                                  Text("${vals['speed']?.round()} KM/H",
                                       style: const TextStyle(color: Color(0xFFFF5722), fontWeight: FontWeight.bold, fontSize: 16)),
                                 ],
                               ),

@@ -1,0 +1,24 @@
+{
+  "model_name": "CrashDetector",
+  "seq_len": 10,
+  "n_features": 10,
+  "feature_names": [
+    "acc_mag",
+    "gyro_mag",
+    "jerk_mag",
+    "acc_energy",
+    "Speed_kmh",
+    "speed_change",
+    "deceleration",
+    "acc_mag_std",
+    "gyro_mag_std",
+    "Motion_Intensity"
+  ],
+  "optimal_threshold": 0.9756576418876648,
+  "metrics": {
+    "accuracy": 1.0,
+    "precision": 1.0,
+    "recall": 1.0,
+    "f1_score": 1.0
+  }
+}

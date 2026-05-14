@@ -14,58 +14,69 @@ class SensorService {
   factory SensorService() => _instance;
   SensorService._internal();
 
-  // --- ONNX Sessions ---
-  OrtSession? _ifSession;
-  OrtSession? _lstmSession;
+  // ─── ONNX Session (single supervised model) ───────────────────
+  OrtSession? _crashSession;
 
-  // --- Manual Scaler (extracted from scaler.onnx) ---
-  // The ONNX Scaler op (ai.onnx.ml domain) is NOT supported by mobile runtime.
-  // Formula: scaled = (input - offset) * scale
-  static const List<double> _scalerOffset = [
-    0.5812240839004517, 0.45880013704299927, 0.27857404947280884, 2.1035547256469727,
-    46.16666030883789, 18.69965934753418, 9.338562965393066, 0.23838044703006744,
-    0.2717263400554657, 26.08204460144043, 0.2955499291419983, 1.0037987232208252,
-    26.08204460144043, 0.4107585847377777, 0.2955499291419983, 0.28528305888175964,
-    0.7979305386543274, 0.960808277130127, 1.026084303855896, 0.7130987048149109,
-    0.97223299741745, 1.1061550378799438, 1.395164132118225, 314.6629943847656,
-    0.5867232084274292, 0.40695685148239136, 12.364639282226562, 14.307472229003906,
+  // ─── MinMaxScaler — from scaler_params.json ───────────────────
+  // Formula: scaled = (x - data_min) / data_range → clamped to [0, 1]
+  // Feature order: acc_mag, gyro_mag, jerk_mag, acc_energy, Speed_kmh,
+  //                speed_change, deceleration, acc_mag_std, gyro_mag_std, Motion_Intensity
+  static const List<double> _scalerMin = [
+    0.14835754706056567,   // acc_mag
+    0.017931796334009743,  // gyro_mag
+    0.005633107714523244,  // jerk_mag
+    0.9412008465161509,    // acc_energy
+    1.9136054378485712,    // Speed_kmh
+    0.22973139365249728,   // speed_change
+    -0.0,                  // deceleration
+    0.08941984729235401,   // acc_mag_std
+    0.009736873886131847,  // gyro_mag_std
+    0.007417261075661512,  // Motion_Intensity
   ];
-  static const List<double> _scalerScale = [
-    3.5216729640960693, 0.6616964936256409, 4.3898773193359375, 0.7138369679450989,
-    0.0494876429438591, 0.07000245898962021, 0.0725044310092926, 9.120372772216797,
-    1.07450532913208, 0.061143286526203156, 0.8436436057090759, 2.3928940296173096,
-    0.061143286526203156, 1.4646075963974, 0.8436436057090759, 4.9845991134643555,
-    3.4742870330810547, 3.34252667427063, 3.2636709213256836, 0.43467336893081665,
-    0.3243963420391083, 0.2853882908821106, 1.565499186515808, 0.0022339678835123777,
-    3.6795170307159424, 0.5867322087287903, 0.08749629557132721, 0.014429906383156776,
+  static const List<double> _scalerRange = [
+    5.55419977490954,      // acc_mag
+    0.16282762491935973,   // gyro_mag
+    1.9760407802568276,    // jerk_mag
+    129.63823929181044,    // acc_energy
+    77.44424449029398,     // Speed_kmh
+    53.14406842615486,     // speed_change
+    50.68997890927525,     // deceleration
+    1.0495263472236498,    // acc_mag_std
+    0.055449453885758594,  // gyro_mag_std
+    0.6617055419684479,    // Motion_Intensity
   ];
 
-  // --- Model Constants (must match mobile_config.json / main.py v3) ---
-  final int _seqLen = 15;       // SEQ_LEN from main.py
-  final int _numFeatures = 28;  // 28 orientation-invariant features
-  final double _lstmThreshold = 0.80173; // Calibrated from training (99.5th percentile)
+  // ─── Model Constants (from model_config.json / main.py) ───────
+  final int _seqLen = 10;        // must match SEQ_LEN in main.py
+  final int _numFeatures = 10;   // 10 features (down from 28)
+  final double _crashThreshold = 0.85; // F1-optimal: 0.9735; kept at 0.85 for sensitivity, impact gate guards FPs
+  final double _impactThresholdMs2 = 20.0; // require >2g instantaneous acceleration
+  final double _minCrashSpeedKmh = 5.0;    // ignore phone-handling events at near-standstill
 
-  // --- Sequence Buffer for LSTM ---
+  // ─── Sequence Buffer ──────────────────────────────────────────
   final List<List<double>> _sequenceBuffer = [];
 
-  // --- Rolling History Buffers (for windowed features) ---
+  // ─── Rolling History Buffers (window = 5) ─────────────────────
   final List<double> _accMagHistory = [];
   final List<double> _gyroMagHistory = [];
-  final List<double> _jerkMagHistory = [];
-  final List<double> _speedHistory = [];
 
-  // --- Previous-timestep values (for diff-based features) ---
+  // ─── Previous-timestep values ─────────────────────────────────
   double _lastAccMag = 0;
-  double _lastGyroMag = 0;
   double _lastSpeed = 0;
 
-  // --- Subscriptions ---
+  // ─── Probability smoothing (median of last 3, reduces FP spikes) ──
+  final List<double> _probHistory = [];
+
+  // ─── Cached GPS position for instant incident logging ─────────
+  Position? _lastKnownPosition;
+
+  // ─── Subscriptions ────────────────────────────────────────────
   StreamSubscription<UserAccelerometerEvent>? _accelSub;
   StreamSubscription<GyroscopeEvent>? _gyroSub;
   StreamSubscription<Position>? _gpsSub;
   Timer? _inferenceTimer;
 
-  // --- Stream Controllers ---
+  // ─── Stream Controllers ───────────────────────────────────────
   final StreamController<bool> _statusController = StreamController<bool>.broadcast();
   Stream<bool> get statusStream => _statusController.stream;
 
@@ -79,6 +90,7 @@ class SensorService {
   bool get isMonitoring => _isMonitoring;
 
   DateTime? _lastAccidentTime;
+  int _inferenceCount = 0;
 
   final Map<String, double> _latestData = {
     'ax': 0.0, 'ay': 0.0, 'az': 0.0,
@@ -91,13 +103,10 @@ class SensorService {
   Future<void> initModels() async {
     try {
       OrtEnv.instance.init();
-      // NOTE: scaler.onnx uses ai.onnx.ml Scaler op (unsupported on mobile).
-      // Scaling is done manually via _scaleFeatures() instead.
-      _ifSession = await _createSession("lib/assets/models/isolation_forest.onnx");
-      _lstmSession = await _createSession("lib/assets/models/lstm_autoencoder.onnx");
-      print("✅ AI Models Loaded Successfully (v3 — 28 features, seq_len=$_seqLen, manual scaler)");
+      _crashSession = await _createSession("lib/assets/models/crash_detector.onnx");
+      print("✅ CrashDetector Loaded (supervised, $_numFeatures features, seq_len=$_seqLen)");
     } catch (e) {
-      print("❌ Error loading models: $e");
+      print("❌ Error loading model: $e");
     }
   }
 
@@ -108,156 +117,64 @@ class SensorService {
   }
 
   // ===================== 2. Feature Engineering =====================
-  // Must produce exactly 28 features in the EXACT order the model expects.
-  // Feature order from mobile_config.json:
-  //  0: acc_mag              1: gyro_mag             2: jerk_mag
-  //  3: acc_energy           4: speed                5: speed_change
-  //  6: deceleration         7: acc_mag_std          8: gyro_mag_std
-  //  9: speed_acc_interaction 10: gyro_jerk          11: acc_peak_ratio
-  // 12: resultant_force      13: acc_skewness        14: angular_velocity_change
-  // 15: acc_gyro_corr        16: acc_mag_max_3       17: acc_mag_max_7
-  // 18: acc_mag_max_10       19: gyro_mag_max_3      20: gyro_mag_max_7
-  // 21: gyro_mag_max_10      22: cumulative_jerk     23: braking_intensity
-  // 24: impact_intensity     25: gyro_acc_product    26: speed_weighted_jerk
-  // 27: rotational_energy
+  // Produces exactly 10 features in the order the model expects:
+  //  0: acc_mag          1: gyro_mag         2: jerk_mag
+  //  3: acc_energy       4: Speed_kmh        5: speed_change
+  //  6: deceleration     7: acc_mag_std      8: gyro_mag_std
+  //  9: Motion_Intensity (= acc_mag * gyro_mag)
 
-  List<double> _engineerFeatures() {
-    // Raw sensor data (already gravity-removed via userAccelerometerEventStream)
-    final double ax = _latestData['ax']!;
-    final double ay = _latestData['ay']!;
-    final double az = _latestData['az']!;
-    final double gx = _latestData['gx']!;
-    final double gy = _latestData['gy']!;
-    final double gz = _latestData['gz']!;
-    final double speed = _latestData['speed']!;
+  List<double> _engineerFeatures(Map<String, double> snapshot) {
+    final double ax = snapshot['ax']!;
+    final double ay = snapshot['ay']!;
+    final double az = snapshot['az']!;
+    final double gx = snapshot['gx']!;
+    final double gy = snapshot['gy']!;
+    final double gz = snapshot['gz']!;
+    final double speed = snapshot['speed']!;
 
-    // --- Core magnitudes ---
-    final double accMag = math.sqrt(ax * ax + ay * ay + az * az);
-    final double gyroMag = math.sqrt(gx * gx + gy * gy + gz * gz);
+    // Core magnitudes
+    final double accMag  = math.sqrt(ax*ax + ay*ay + az*az);
+    final double gyroMag = math.sqrt(gx*gx + gy*gy + gz*gz);
     final double jerkMag = (accMag - _lastAccMag).abs();
-    final double speedChange = (speed - _lastSpeed).abs();
+    final double speedChange  = (speed - _lastSpeed).abs();
     final double deceleration = (speed < _lastSpeed) ? (_lastSpeed - speed) : 0.0;
-    final double gyroJerk = (gyroMag - _lastGyroMag).abs();
 
-    // --- Update rolling histories ---
+    // Update rolling histories (window = 5)
     _accMagHistory.add(accMag);
     _gyroMagHistory.add(gyroMag);
-    _jerkMagHistory.add(jerkMag);
-    _speedHistory.add(speed);
-    // Keep at most 10 entries (longest window we need)
-    if (_accMagHistory.length > 10) _accMagHistory.removeAt(0);
-    if (_gyroMagHistory.length > 10) _gyroMagHistory.removeAt(0);
-    if (_jerkMagHistory.length > 10) _jerkMagHistory.removeAt(0);
-    if (_speedHistory.length > 10) _speedHistory.removeAt(0);
+    if (_accMagHistory.length  > 5) _accMagHistory.removeAt(0);
+    if (_gyroMagHistory.length > 5) _gyroMagHistory.removeAt(0);
 
-    // --- acc_energy: sum of squares over window=5 ---
-    final accEnergyWindow = _accMagHistory.length >= 5
-        ? _accMagHistory.sublist(_accMagHistory.length - 5)
-        : List<double>.from(_accMagHistory);
-    final double accEnergy = accEnergyWindow.fold(0.0, (s, v) => s + v * v);
+    // acc_energy: sum of squares over window=5
+    final double accEnergy = _accMagHistory.fold(0.0, (s, v) => s + v * v);
 
-    // --- acc_mag_std: std of acc_mag over window=5 ---
-    final double accMagStd = _rollingStd(_accMagHistory, 5);
-
-    // --- gyro_mag_std: std of gyro_mag over window=5 ---
+    // Rolling std (window=5)
+    final double accMagStd  = _rollingStd(_accMagHistory,  5);
     final double gyroMagStd = _rollingStd(_gyroMagHistory, 5);
 
-    // --- speed_acc_interaction ---
-    final double speedAccInteraction = speed.abs() * accMag;
+    // Motion_Intensity = acc_mag * gyro_mag
+    final double motionIntensity = accMag * gyroMag;
 
-    // --- acc_peak_ratio ---
-    final double meanAcc = _rollingMean(_accMagHistory, 7);
-    final double accPeakRatio = (accMag / (meanAcc + 1e-6)).clamp(0.0, 10.0);
+    // Save for next tick
+    _lastAccMag  = accMag;
+    _lastSpeed   = speed;
 
-    // --- resultant_force ---
-    final double resultantForce = speed.abs() * accMag;
-
-    // --- acc_skewness (rolling window=10) ---
-    final double accSkewness = _rollingSkewness(_accMagHistory, 10);
-
-    // --- angular_velocity_change ---
-    final double angularVelocityChange = gyroJerk; // same as gyro_jerk, diff name
-
-    // --- acc_gyro_corr (rolling correlation of acc_mag and gyro_mag, window=10) ---
-    final double accGyroCorr = _rollingCorrelation(_accMagHistory, _gyroMagHistory, 10).abs();
-
-    // --- Multi-resolution window max features ---
-    final double accMagMax3 = _rollingMax(_accMagHistory, 3);
-    final double accMagMax7 = _rollingMax(_accMagHistory, 7);
-    final double accMagMax10 = _rollingMax(_accMagHistory, 10);
-    final double gyroMagMax3 = _rollingMax(_gyroMagHistory, 3);
-    final double gyroMagMax7 = _rollingMax(_gyroMagHistory, 7);
-    final double gyroMagMax10 = _rollingMax(_gyroMagHistory, 10);
-
-    // --- cumulative_jerk: sum of jerk over window=5 ---
-    final jerkWindow = _jerkMagHistory.length >= 5
-        ? _jerkMagHistory.sublist(_jerkMagHistory.length - 5)
-        : List<double>.from(_jerkMagHistory);
-    final double cumulativeJerk = jerkWindow.fold(0.0, (s, v) => s + v);
-
-    // --- braking_intensity ---
-    final double brakingIntensity = speed.abs() * deceleration;
-
-    // --- impact_intensity: peak-to-trough in window=5 ---
-    final double impactIntensity = _rollingMax(_accMagHistory, 5) - _rollingMin(_accMagHistory, 5);
-
-    // --- gyro_acc_product ---
-    final double gyroAccProduct = accMag * gyroMag;
-
-    // --- speed_weighted_jerk ---
-    final double speedWeightedJerk = speed.abs() * jerkMag;
-
-    // --- rotational_energy: sum of squares of gyro over window=5 ---
-    final gyroEnergyWindow = _gyroMagHistory.length >= 5
-        ? _gyroMagHistory.sublist(_gyroMagHistory.length - 5)
-        : List<double>.from(_gyroMagHistory);
-    final double rotationalEnergy = gyroEnergyWindow.fold(0.0, (s, v) => s + v * v);
-
-    // --- Save previous values for next timestep ---
-    _lastAccMag = accMag;
-    _lastGyroMag = gyroMag;
-    _lastSpeed = speed;
-
-    // --- Return all 28 features in exact order ---
+    // Return exactly 10 features in the order the model expects
     return [
-      accMag,                // 0: acc_mag
-      gyroMag,               // 1: gyro_mag
-      jerkMag,               // 2: jerk_mag
-      accEnergy,             // 3: acc_energy
-      speed,                 // 4: speed
-      speedChange,           // 5: speed_change
-      deceleration,          // 6: deceleration
-      accMagStd,             // 7: acc_mag_std
-      gyroMagStd,            // 8: gyro_mag_std
-      speedAccInteraction,   // 9: speed_acc_interaction
-      gyroJerk,              // 10: gyro_jerk
-      accPeakRatio,          // 11: acc_peak_ratio
-      resultantForce,        // 12: resultant_force
-      accSkewness,           // 13: acc_skewness
-      angularVelocityChange, // 14: angular_velocity_change
-      accGyroCorr,           // 15: acc_gyro_corr
-      accMagMax3,            // 16: acc_mag_max_3
-      accMagMax7,            // 17: acc_mag_max_7
-      accMagMax10,           // 18: acc_mag_max_10
-      gyroMagMax3,           // 19: gyro_mag_max_3
-      gyroMagMax7,           // 20: gyro_mag_max_7
-      gyroMagMax10,          // 21: gyro_mag_max_10
-      cumulativeJerk,        // 22: cumulative_jerk
-      brakingIntensity,      // 23: braking_intensity
-      impactIntensity,       // 24: impact_intensity
-      gyroAccProduct,        // 25: gyro_acc_product
-      speedWeightedJerk,     // 26: speed_weighted_jerk
-      rotationalEnergy,      // 27: rotational_energy
+      accMag,           // 0: acc_mag
+      gyroMag,          // 1: gyro_mag
+      jerkMag,          // 2: jerk_mag
+      accEnergy,        // 3: acc_energy
+      speed,            // 4: Speed_kmh
+      speedChange,      // 5: speed_change
+      deceleration,     // 6: deceleration
+      accMagStd,        // 7: acc_mag_std
+      gyroMagStd,       // 8: gyro_mag_std
+      motionIntensity,  // 9: Motion_Intensity
     ];
   }
 
   // ===================== Rolling Statistics Helpers =====================
-
-  double _rollingMean(List<double> history, int window) {
-    if (history.isEmpty) return 0.0;
-    final w = history.length >= window ? history.sublist(history.length - window) : history;
-    return w.reduce((a, b) => a + b) / w.length;
-  }
 
   double _rollingStd(List<double> history, int window) {
     if (history.length < 2) return 0.0;
@@ -269,137 +186,106 @@ class SensorService {
     return math.sqrt(variance);
   }
 
-  double _rollingMax(List<double> history, int window) {
-    if (history.isEmpty) return 0.0;
-    final w = history.length >= window ? history.sublist(history.length - window) : history;
-    return w.reduce(math.max);
-  }
+  // ===================== 3. Scaling & Inference =====================
 
-  double _rollingMin(List<double> history, int window) {
-    if (history.isEmpty) return 0.0;
-    final w = history.length >= window ? history.sublist(history.length - window) : history;
-    return w.reduce(math.min);
-  }
-
-  double _rollingSkewness(List<double> history, int window) {
-    if (history.length < 3) return 0.0;
-    final w = history.length >= window ? history.sublist(history.length - window) : history;
-    final int n = w.length;
-    if (n < 3) return 0.0;
-    final double mean = w.reduce((a, b) => a + b) / n;
-    final double sampleVariance = w.fold(0.0, (s, v) => s + (v - mean) * (v - mean)) / (n - 1);
-    if (sampleVariance < 1e-10) return 0.0;
-    final double sampleStd = math.sqrt(sampleVariance);
-    
-    double sumCubed = 0.0;
-    for (var v in w) {
-      sumCubed += math.pow((v - mean) / sampleStd, 3);
-    }
-    return (n / ((n - 1) * (n - 2))) * sumCubed;
-  }
-
-  double _rollingCorrelation(List<double> histA, List<double> histB, int window) {
-    final minLen = math.min(histA.length, histB.length);
-    if (minLen < 3) return 0.0;
-    final len = math.min(minLen, window);
-    final a = histA.sublist(histA.length - len);
-    final b = histB.sublist(histB.length - len);
-    final meanA = a.reduce((x, y) => x + y) / len;
-    final meanB = b.reduce((x, y) => x + y) / len;
-    double cov = 0, varA = 0, varB = 0;
-    for (int i = 0; i < len; i++) {
-      cov += (a[i] - meanA) * (b[i] - meanB);
-      varA += (a[i] - meanA) * (a[i] - meanA);
-      varB += (b[i] - meanB) * (b[i] - meanB);
-    }
-    final denom = math.sqrt(varA * varB);
-    if (denom < 1e-10) return 0.0;
-    return cov / denom;
-  }
-
-  // ===================== 3. Inference Logic =====================
-
-  int _inferenceCount = 0;
-
-  /// Apply StandardScaler transform: scaled = (input - offset) * scale
-  /// Then clamp to [-5, 5] to match training pipeline's percentile clipping.
-  /// Without clamping, sensor spikes produce extreme scaled values (e.g. 2000+)
-  /// that the LSTM cannot reconstruct, causing MSE to explode.
+  /// MinMaxScaler: scaled = (x - data_min) / data_range, clamped to [0, 1]
   List<double> _scaleFeatures(List<double> raw) {
     final scaled = List<double>.filled(raw.length, 0.0);
     for (int i = 0; i < raw.length; i++) {
-      scaled[i] = ((raw[i] - _scalerOffset[i]) * _scalerScale[i]).clamp(-5.0, 5.0);
+      final range = _scalerRange[i];
+      scaled[i] = range > 0
+          ? ((raw[i] - _scalerMin[i]) / range).clamp(0.0, 1.0)
+          : 0.0;
     }
     return scaled;
   }
 
   Future<void> _performInference() async {
-    if (_ifSession == null && _lstmSession == null) return;
+    if (_crashSession == null) return;
 
-    // --- Compute features, scale, and fill the buffer every tick ---
-    final rawFeatures = _engineerFeatures();
-    final scaledList = _scaleFeatures(rawFeatures);
+    // ── Snapshot sensor data atomically ──────────────────────────
+    // Prevents race condition: sensor callbacks can overwrite _latestData
+    // between feature engineering and impact gate, causing mismatched values
+    final snapshot = Map<String, double>.from(_latestData);
 
-    _sequenceBuffer.add(scaledList);
+    // Snapshot raw components for logging
+    final double ax = snapshot['ax'] ?? 0.0;
+    final double ay = snapshot['ay'] ?? 0.0;
+    final double az = snapshot['az'] ?? 0.0;
+    final double currentSpeed = snapshot['speed'] ?? 0.0;
+
+    // Engineer and scale features (uses same snapshot)
+    final rawFeatures    = _engineerFeatures(snapshot);
+    final scaledFeatures = _scaleFeatures(rawFeatures);
+
+    // Use engineered acc_mag directly to avoid duplicate magnitude calculation
+    final double instantAccMag = rawFeatures[0];
+
+    // Log raw sensor values every 5 seconds (throttled to reduce noise)
+    if (_inferenceCount % 5 == 0) {
+      print('📡 Sensors — Acc[${ax.toStringAsFixed(2)}, ${ay.toStringAsFixed(2)}, ${az.toStringAsFixed(2)}] Gyro[${(snapshot['gx'] ?? 0.0).toStringAsFixed(2)}, ${(snapshot['gy'] ?? 0.0).toStringAsFixed(2)}, ${(snapshot['gz'] ?? 0.0).toStringAsFixed(2)}] Speed:${currentSpeed.toStringAsFixed(1)}km/h accMag:${instantAccMag.toStringAsFixed(1)}');
+    }
+
+    // Fill sequence buffer
+    _sequenceBuffer.add(scaledFeatures);
     if (_sequenceBuffer.length > _seqLen) _sequenceBuffer.removeAt(0);
 
-    // --- Wait for buffer to fill before making predictions ---
     if (_sequenceBuffer.length < _seqLen) {
       print('   🧠 AI Priming: Buffer ${_sequenceBuffer.length}/$_seqLen');
       return;
     }
 
     _inferenceCount++;
+    final int inferCount = _inferenceCount;
 
-    // --- Isolation Forest ---
-    int ifLabel = 1; // default: normal
-    if (_ifSession != null) {
-      final ifOut = await _runOnnx(scaledList, _ifSession!, [1, _numFeatures]);
-      ifLabel = ifOut[0].toInt();
+    // Run CrashDetector — input shape: [1, seq_len, n_features]
+    final flatData = _sequenceBuffer.expand((e) => e).toList();
+    final output   = await _runOnnx(flatData, _crashSession!, [1, _seqLen, _numFeatures]);
+
+    if (output.isEmpty) return;
+
+    final double crashProb = output[0];
+
+    // Smooth probability over last 3 values (reduces single-tick false positives)
+    _probHistory.add(crashProb);
+    if (_probHistory.length > 3) _probHistory.removeAt(0);
+    final List<double> sorted = List.from(_probHistory)..sort();
+    final double smoothedProb = sorted[sorted.length ~/ 2];
+
+    // Warmup guard: need at least 3 inference ticks so median smoothing is meaningful.
+    // Without this, the very first inference after priming triggers on noisy startup data.
+    if (_probHistory.length < 3) {
+      print('   🔄 Warmup: ${_probHistory.length}/3 ticks — Prob:${(crashProb * 100).toStringAsFixed(1)}%');
+      return;
     }
 
-    // --- LSTM Autoencoder ---
-    double lstmMSE = 0.0;
-    bool lstmAnomaly = false;
-    if (_lstmSession != null) {
-      final flatData = _sequenceBuffer.expand((e) => e).toList();
-      final recon = await _runOnnx(flatData, _lstmSession!, [1, _seqLen, _numFeatures]);
-
-      double sumSqErr = 0;
-      for (int i = 0; i < flatData.length; i++) {
-        final diff = flatData[i] - recon[i];
-        sumSqErr += diff * diff;
-      }
-      lstmMSE = sumSqErr / flatData.length;
-      lstmAnomaly = lstmMSE > _lstmThreshold;
-    }
-
-    // --- FINAL VERDICT ---
-    // Both models must agree: IF says anomaly (-1) AND LSTM MSE exceeds threshold.
-    final isAccident = (ifLabel == -1) && lstmAnomaly;
+    // Impact + speed gates: require real impact while vehicle is moving
+    final bool hasImpact = instantAccMag > _impactThresholdMs2;
+    final bool hasMinSpeed = currentSpeed >= _minCrashSpeedKmh;
+    final bool isAccident = smoothedProb >= _crashThreshold && hasImpact && hasMinSpeed;
 
     final now = DateTime.now();
-    final inCooldown = _lastAccidentTime != null && now.difference(_lastAccidentTime!).inSeconds < 30;
+    final inCooldown = _lastAccidentTime != null &&
+        now.difference(_lastAccidentTime!).inSeconds < 30;
 
     if (isAccident && !inCooldown) {
       _lastAccidentTime = now;
-      _printTriggerValues(ifLabel, lstmMSE);
+      _sequenceBuffer.clear(); // prevent re-trigger from stale crash data
+      _probHistory.clear();
+      print('🚨 >>> ACCIDENT DETECTED! <<<');
+      print('   - Speed: ${currentSpeed.toStringAsFixed(1)} km/h');
+      print('   - Crash Probability: ${(smoothedProb * 100).toStringAsFixed(1)}% (threshold: ${(_crashThreshold * 100).toStringAsFixed(0)}%)');
+      print('   - Impact: acc_mag=${instantAccMag.toStringAsFixed(1)} m/s² (gate: ${_impactThresholdMs2.toStringAsFixed(1)})');
+      print('   - Speed Gate: min ${_minCrashSpeedKmh.toStringAsFixed(1)} km/h');
+      print('   📊 Raw Sensors (snapshot):');
+      print('      Accel  → X:${ax.toStringAsFixed(3)} Y:${ay.toStringAsFixed(3)} Z:${az.toStringAsFixed(3)}');
+      print('      Gyro   → X:${(snapshot['gx'] ?? 0.0).toStringAsFixed(3)} Y:${(snapshot['gy'] ?? 0.0).toStringAsFixed(3)} Z:${(snapshot['gz'] ?? 0.0).toStringAsFixed(3)}');
+      print('   🧮 Features: acc_mag=${rawFeatures[0].toStringAsFixed(3)} gyro_mag=${rawFeatures[1].toStringAsFixed(3)} jerk=${rawFeatures[2].toStringAsFixed(3)} energy=${rawFeatures[3].toStringAsFixed(1)} decel=${rawFeatures[6].toStringAsFixed(1)} intensity=${rawFeatures[9].toStringAsFixed(3)}');
       _accidentController.add(null);
       _insertIncident();
-    } else if (_inferenceCount % 5 == 0) {
-      final speed = _latestData['speed'] ?? 0.0;
-      print('   ✅ Normal — IF:$ifLabel | MSE:${lstmMSE.toStringAsFixed(4)} | Speed:${speed.toStringAsFixed(1)}');
+    } else if (inferCount % 5 == 0) {
+      print('   ✅ Normal — Prob:${(smoothedProb * 100).toStringAsFixed(1)}% | Impact:${instantAccMag.toStringAsFixed(1)} | Speed:${currentSpeed.toStringAsFixed(1)}');
     }
-  }
-
-  void _printTriggerValues(int ifLabel, double mse) {
-    print('🚨 >>> ACCIDENT DETECTED! <<<');
-    print('📊 Trigger State:');
-    print('   - Speed: ${_latestData['speed']?.toStringAsFixed(1)} km/h');
-    print('   - IF Label: $ifLabel (-1 is Anomaly)');
-    print('   - LSTM MSE: ${mse.toStringAsFixed(4)} (threshold: $_lstmThreshold)');
-    print('   - Accel (X,Y,Z): ${_latestData['ax']?.toStringAsFixed(3)}, ${_latestData['ay']?.toStringAsFixed(3)}, ${_latestData['az']?.toStringAsFixed(3)}');
-    print('   - Gyro (X,Y,Z): ${_latestData['gx']?.toStringAsFixed(3)}, ${_latestData['gy']?.toStringAsFixed(3)}, ${_latestData['gz']?.toStringAsFixed(3)}');
   }
 
   // ===================== 4. Database Push =====================
@@ -410,12 +296,15 @@ class SensorService {
       final user = client.auth.currentUser;
       if (user == null) return;
 
-      final pos = await Geolocator.getCurrentPosition(
-        locationSettings: const LocationSettings(accuracy: LocationAccuracy.high),
-      );
+      // Use cached GPS position instead of blocking on a fresh fix
+      final pos = _lastKnownPosition;
+      if (pos == null) {
+        print('   ⚠️ DB: No GPS position cached, incident not logged');
+        return;
+      }
 
       final payload = {
-        'user_id': user.id, // UUID type
+        'user_id': user.id,
         'latitude': pos.latitude,
         'longitude': pos.longitude,
         'is_active': true,
@@ -449,7 +338,7 @@ class SensorService {
 
     inputTensor.release();
     runOptions.release();
-    for (final o in outputs ?? []) { o?.release(); }
+    for (final o in outputs) { o?.release(); }
     return result;
   }
 
@@ -522,8 +411,8 @@ class SensorService {
       if (Platform.isAndroid) {
         locationSettings = AndroidSettings(
           accuracy: LocationAccuracy.bestForNavigation,
-          distanceFilter: 0, // Continuous updates
-          intervalDuration: const Duration(seconds: 1), // 1-second interval
+          distanceFilter: 0,
+          intervalDuration: const Duration(milliseconds: 500),
         );
       } else if (Platform.isIOS) {
         locationSettings = AppleSettings(
@@ -542,8 +431,8 @@ class SensorService {
       _gpsSub = Geolocator.getPositionStream(
         locationSettings: locationSettings,
       ).listen(
-        (p) {
-          // Clamp negative speed values (GPS can report -1 when unavailable)
+            (p) {
+          _lastKnownPosition = p;
           final rawSpeed = p.speed < 0 ? 0.0 : p.speed;
           _latestData['speed'] = rawSpeed * 3.6; // m/s -> km/h
           print('📍 GPS Update — Speed: ${_latestData['speed']!.toStringAsFixed(1)} km/h | Lat: ${p.latitude.toStringAsFixed(5)} | Lng: ${p.longitude.toStringAsFixed(5)}');
@@ -551,7 +440,6 @@ class SensorService {
         },
         onError: (error) {
           print('⚠️ GPS Stream Error: $error');
-          // Speed stays at last known value or 0.0
         },
       );
     } else {
@@ -564,13 +452,21 @@ class SensorService {
   }
 
   void stopMonitoring() {
-    _accelSub?.cancel(); _gyroSub?.cancel(); _gpsSub?.cancel(); _inferenceTimer?.cancel();
+    _accelSub?.cancel();
+    _gyroSub?.cancel();
+    _gpsSub?.cancel();
+    _inferenceTimer?.cancel();
+
     _sequenceBuffer.clear();
     _accMagHistory.clear();
     _gyroMagHistory.clear();
-    _jerkMagHistory.clear();
-    _speedHistory.clear();
-    _lastAccMag = 0; _lastGyroMag = 0; _lastSpeed = 0;
-    _isMonitoring = false; _statusController.add(false);
+    _probHistory.clear();
+
+    _lastAccMag = 0;
+    _lastSpeed  = 0;
+    _lastKnownPosition = null;
+
+    _isMonitoring = false;
+    _statusController.add(false);
   }
 }
