@@ -14,7 +14,7 @@
     "gyro_mag_std",
     "Motion_Intensity"
   ],
-  "optimal_threshold": 0.9756576418876648,
+  "optimal_threshold": 0.9755170941352844,
   "metrics": {
     "accuracy": 1.0,
     "precision": 1.0,

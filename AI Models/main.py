@@ -282,6 +282,28 @@ def evaluate_and_plot(model, X_test, y_test):
     f1 = f1_score(y_test, y_pred, zero_division=0)
 
     log.info(f"Test Results -> Acc: {acc:.4f} | Prec: {prec:.4f} | Rec: {rec:.4f} | F1: {f1:.4f} | Thresh: {best_thresh:.4f}")
+
+    cm = confusion_matrix(y_test, y_pred)
+    log.info("Confusion Matrix:")
+    log.info(f"  TN={cm[0][0]}  FP={cm[0][1]}")
+    log.info(f"  FN={cm[1][0]}  TP={cm[1][1]}")
+    log.info("\nClassification Report:\n%s", classification_report(y_test, y_pred, target_names=["Normal", "Crash"], zero_division=0))
+
+    # Save confusion matrix as image
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues",
+                xticklabels=["Normal", "Crash"],
+                yticklabels=["Normal", "Crash"], ax=ax,
+                annot_kws={"size": 16})
+    ax.set_xlabel("Predicted Label", fontsize=13)
+    ax.set_ylabel("True Label", fontsize=13)
+    ax.set_title("Confusion Matrix — Crash Detection", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    cm_path = os.path.join(SAVE_DIR, "imu_labeled_test_confusion_matrix.png")
+    fig.savefig(cm_path, dpi=150)
+    plt.close(fig)
+    log.info(f"Confusion matrix saved to {cm_path}")
+
     return acc, prec, rec, f1, best_thresh
 
 def export_to_onnx(model, scaler, n_features: int, seq_len: int):
